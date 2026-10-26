@@ -48,7 +48,7 @@ export default function LoginPage() {
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!selectedCaretakerId) {
-      setError('กรุณาเลือกอาจารย์ก่อนกรอกรหัส PIN');
+      setError('กรุณาเลือกอาจารย์ก่อน');
       return;
     }
     setError('');
