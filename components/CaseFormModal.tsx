@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Search, X } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
+import { requestApi } from '@/lib/api';
 import { studentName } from '@/lib/cases';
 import { useSessionCaretaker } from '@/lib/session';
 import type { Caretaker, Student } from '@/types/database';
@@ -14,6 +14,8 @@ export default function CaseFormModal({ onClose, onCreated }: Props) {
   const [caretakers, setCaretakers] = useState<Caretaker[]>([]);
   const [selectedStudents, setSelectedStudents] = useState<Student[]>([]);
   const [caretakerChoices, setCaretakerChoices] = useState<string[]>([]);
+  const [academicYears, setAcademicYears] = useState<string[]>([]);
+  const [academicYear, setAcademicYear] = useState('2569');
   const [search, setSearch] = useState('');
   const [gradeFilter, setGradeFilter] = useState('');
   const [roomFilter, setRoomFilter] = useState('');
@@ -35,22 +37,45 @@ export default function CaseFormModal({ onClose, onCreated }: Props) {
   useEffect(() => {
     let active = true;
     async function loadOptions() {
-      const [studentResult, caretakerResult] = await Promise.all([
-        supabase.from('students').select('*').order('first_name_th'),
-        supabase.from('caretakers').select('*').order('name'),
-      ]);
-      if (!active) return;
-      const loadError = studentResult.error ?? caretakerResult.error;
-      if (loadError) setError(`โหลดรายชื่อนักเรียนหรือผู้ดูแลไม่สำเร็จ: ${loadError.message}`);
-      else {
-        setStudents((studentResult.data ?? []) as Student[]);
-        setCaretakers((caretakerResult.data ?? []) as Caretaker[]);
+      try {
+        const [yearData, caretakerData] = await Promise.all([
+          requestApi<string[]>('listAcademicYears'),
+          requestApi<Caretaker[]>('listCaretakers'),
+        ]);
+        if (!active) return;
+        const selectedYear = yearData[0] ?? '2569';
+        const studentData = await requestApi<Student[]>('listStudents', { academicYear: selectedYear });
+        if (!active) return;
+        setAcademicYears(yearData);
+        setAcademicYear(selectedYear);
+        setStudents(studentData);
+        setCaretakers(caretakerData);
+      } catch (loadError) {
+        if (!active) return;
+        setError(`โหลดรายชื่อนักเรียนหรือผู้ดูแลไม่สำเร็จ: ${loadError instanceof Error ? loadError.message : 'เกิดข้อผิดพลาดที่ไม่ทราบสาเหตุ'}`);
+      } finally {
+        if (active) setLoading(false);
       }
-      setLoading(false);
     }
     void loadOptions();
     return () => { active = false; };
   }, []);
+
+  async function changeAcademicYear(value: string) {
+    setAcademicYear(value);
+    setSelectedStudents([]);
+    setGradeFilter('');
+    setRoomFilter('');
+    setLoading(true);
+    setError('');
+    try {
+      setStudents(await requestApi<Student[]>('listStudents', { academicYear: value }));
+    } catch (loadError) {
+      setError(`โหลดรายชื่อนักเรียนไม่สำเร็จ: ${loadError instanceof Error ? loadError.message : 'เกิดข้อผิดพลาดที่ไม่ทราบสาเหตุ'}`);
+    } finally {
+      setLoading(false);
+    }
+  }
 
   const grades = useMemo(
     () => [...new Set(students.map((student) => student.grade).filter((grade): grade is string => Boolean(grade)))].sort(),
@@ -96,19 +121,22 @@ export default function CaseFormModal({ onClose, onCreated }: Props) {
       return;
     }
     setSaving(true);
-    const { error: saveError } = await supabase.rpc('create_case_with_relations', {
-      p_case_type: caseType,
-      p_other_text: caseType === 'other' ? otherText.trim() : null,
-      p_details: details.trim() || null,
-      p_scheduled_at: new Date(scheduledAt).toISOString(),
-      p_created_by: currentUser.id,
-      p_student_ids: selectedStudents.map((student) => student.id),
-      p_caretaker_ids: selectedCaretakers,
-    });
-    setSaving(false);
-    if (saveError) {
-      setError(`บันทึกเคสไม่สำเร็จ: ${saveError.message}`);
+    try {
+      await requestApi<null>('createCase', {
+        caseType,
+        otherText: caseType === 'other' ? otherText.trim() : null,
+        details: details.trim() || null,
+        scheduledAt: new Date(scheduledAt).toISOString(),
+        createdBy: currentUser.id,
+        studentIds: selectedStudents.map((student) => student.id),
+        caretakerIds: selectedCaretakers,
+      });
+    } catch (saveError) {
+      setError(`บันทึกเคสไม่สำเร็จ: ${saveError instanceof Error ? saveError.message : 'เกิดข้อผิดพลาดที่ไม่ทราบสาเหตุ'}`);
+      setSaving(false);
       return;
+    } finally {
+      setSaving(false);
     }
     onCreated();
     onClose();
@@ -128,6 +156,11 @@ export default function CaseFormModal({ onClose, onCreated }: Props) {
           <form onSubmit={submit} className="space-y-5">
             <div>
               <label className="mb-2 block text-sm font-semibold">นักเรียนที่เกี่ยวข้อง <span className="text-red-500">*</span></label>
+              <label className="mb-2 block text-xs text-gray-500">ปีการศึกษา
+                <select value={academicYear} onChange={(event) => void changeAcademicYear(event.target.value)} className="mt-1 w-full rounded-xl border border-gray-200 px-3 py-2 text-sm text-gray-800">
+                  {[...new Set([academicYear, ...academicYears])].sort((a, b) => b.localeCompare(a)).map((year) => <option key={year} value={year}>{year}</option>)}
+                </select>
+              </label>
               <div className="grid gap-2 sm:grid-cols-[1fr_140px_110px]">
                 <div className="flex items-center gap-2 rounded-xl border border-gray-200 px-3">
                   <Search size={17} className="text-gray-400" />

@@ -1,5 +1,5 @@
-export function printThaiDocument(title: string, content: string): boolean {
-  const printWindow = window.open('', '_blank');
+export function printThaiDocument(title: string, content: string, targetWindow?: Window | null): boolean {
+  const printWindow = targetWindow ?? window.open('', '_blank');
   if (!printWindow) return false;
   const safeTitle = title.replace(/[&<>"]/g, (character) => ({
     '&': '&amp;',

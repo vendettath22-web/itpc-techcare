@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "ITPC Techcare",
+  title: "itpctakecare",
   description: "ระบบดูแลและติดตามเคสช่วยเหลือนักเรียน",
 };
 

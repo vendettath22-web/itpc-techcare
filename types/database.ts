@@ -1,6 +1,8 @@
 export interface Caretaker {
   id: string;
   name: string;
+  role: 'admin' | 'caretaker';
+  deactivated_at: string | null;
   created_at: string;
 }
 
@@ -13,6 +15,8 @@ export interface Student {
   grade: string | null;
   room: number | null;
   gender: string | null;
+  academic_year: string;
+  deactivated_at: string | null;
   case_count?: number;
 }
 

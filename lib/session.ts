@@ -23,7 +23,9 @@ function parseCaretaker(stored: string | null): Caretaker | null {
       'id' in value &&
       typeof value.id === 'string' &&
       'name' in value &&
-      typeof value.name === 'string'
+      typeof value.name === 'string' &&
+      'role' in value &&
+      (value.role === 'admin' || value.role === 'caretaker')
     ) {
       return value as Caretaker;
     }
@@ -64,7 +66,6 @@ export function getStoredCaretaker(): Caretaker | null {
 
 export function clearSession(): void {
   window.localStorage.removeItem(SESSION_KEY);
-  document.cookie = 'itpc_user_id=; path=/; max-age=0; samesite=lax';
   window.dispatchEvent(new Event(sessionEvent));
 }
 

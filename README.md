@@ -1,48 +1,67 @@
-# ITPC Techcare
+# itpctakecare
 
 ระบบติดตามการดูแลช่วยเหลือนักเรียนด้วย Next.js และ Supabase
 
 ## เริ่มต้นใช้งาน
 
-ติดตั้ง dependencies และกำหนด `.env.local`:
+กำหนด `.env.local` โดยใช้ค่าจาก Supabase Project Settings:
 
 ```env
 NEXT_PUBLIC_SUPABASE_URL=your-supabase-project-url
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your-supabase-anon-key
+SUPABASE_JWT_SECRET=your-supabase-jwt-signing-secret
 ```
 
-จากนั้นรัน:
+`SUPABASE_JWT_SECRET` ใช้เฉพาะฝั่งเซิร์ฟเวอร์เพื่อออก session JWT หลังตรวจ PIN สำเร็จ และต้องเป็น signing secret ที่ Supabase Data API ยอมรับสำหรับ HS256 ห้ามใช้ service-role key แทนค่านี้หรือส่งค่านี้ไปยังเบราว์เซอร์ หากโปรเจกต์ใช้ signing key แบบ asymmetric ให้หยุดก่อน deploy และปรับระบบเข้าสู่ระบบให้ใช้ Supabase Auth แทน
+
+จากนั้นติดตั้งและรัน:
 
 ```bash
 npm install
 npm run dev
 ```
 
-## Supabase API ที่หน้าเว็บใช้
+เปิด `http://localhost:3000/takecare` (หน้าเข้าสู่ระบบ `/takecare/login`)
 
-ตั้งค่า Supabase ให้มีตารางและคอลัมน์ที่สอดคล้องกับ [types/database.ts](./types/database.ts):
+## ติดตั้งฐานข้อมูลและ RLS
 
-- `caretakers`: `id`, `name`, `created_at`
-- `students`: `id`, `student_id`, `first_name_th`, `last_name_th`, `nickname_th`, `grade`, `room`, `gender`
-- `cases`: `id`, `case_type`, `other_text`, `details`, `scheduled_at`, `status`, `created_by`, `created_at`, `updated_at`
-- `case_students`: `case_id`, `student_id`
-- `case_caretakers`: `case_id`, `caretaker_id`
-- `case_updates`: `id`, `case_id`, `caretaker_id`, `activity_note`, `result_note`, `next_step`, `created_at`
-- `case_signatures`: `id`, `case_id`, `signer_name`, `signer_role`, `signature_data`, `signed_at`
+1. สำรองฐานข้อมูลก่อนเปลี่ยน schema และตรวจสอบว่าตาราง/foreign key ตรงกับ DDL ที่ให้มา
+2. เปิด Supabase SQL Editor แล้วรัน migration [20261027000000_roles_years_rls.sql](./supabase/migrations/20261027000000_roles_years_rls.sql)
+3. ตั้งบัญชี admin เริ่มต้นจากบัญชีผู้ดูแลที่มีอยู่แล้ว โดยค้นหา UUID:
 
-เว็บเรียก RPC ต่อไปนี้ด้วยชื่อพารามิเตอร์ตามที่ระบุ:
+   ```sql
+   select id, name
+   from public.caretakers
+   where deactivated_at is null
+   order by created_at;
+   ```
 
-- `verify_caretaker_pin(p_pin)` ต้องคืนข้อมูลผู้ดูแลที่มี `id` และ `name`
-- `create_case_with_relations(p_case_type, p_other_text, p_details, p_scheduled_at, p_created_by, p_student_ids, p_caretaker_ids)`
+   จากนั้นกำหนดบัญชีที่เชื่อถือได้อย่างน้อยหนึ่งบัญชีเป็น admin:
 
-หน้า Login โหลดตัวเลือกอาจารย์จาก `caretakers` และตรวจให้ผู้ดูแลที่ RPC คืนมาตรงกับอาจารย์ที่เลือก
+   ```sql
+   update public.caretakers
+   set role = 'admin'
+   where id = 'ใส่-UUID-บัญชีที่เลือก';
+   ```
 
-กำหนด Row Level Security policies ให้เหมาะกับการใช้งานจริง โดยจำกัดการอ่านและเขียนตามผู้ดูแลที่เข้าสู่ระบบ อย่าใช้ service-role key ในเว็บไคลเอนต์
+4. เพิ่ม `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` และ `SUPABASE_JWT_SECRET` ใน environment ของเครื่องพัฒนาและระบบ deploy แล้ว restart/redeploy
+5. ทดสอบล็อกอินทั้งบัญชี admin และผู้ดูแล จากนั้นตรวจว่า API ทำงานและแถว `deactivated_at` ไม่ถูกอ่านกลับ
+
+Migration จะเพิ่ม Role, `deactivated_at` และ `academic_year`, แปลง PIN แบบ plaintext เดิมเป็น bcrypt hash, จำกัด PIN ใหม่ให้เป็นตัวเลข 4-12 หลัก, สร้าง RPC สำหรับ admin และเปิด RLS ทุกตารางที่เกี่ยวข้อง การเข้าสู่ระบบด้วย PIN ต้องได้บัญชีที่ตรงกันเพียงบัญชีเดียว จึงกำหนด PIN ซ้ำในบัญชีที่เปิดใช้งานไม่ได้
+
+## สิทธิ์และการเก็บข้อมูล
+
+- Admin เพิ่ม/แก้ไข/ปิดบัญชีผู้ดูแล และเพิ่ม/ปิดข้อมูลนักเรียน
+- ผู้ดูแลทั่วไปอ่านข้อมูลที่เปิดใช้งาน แก้ไขได้เฉพาะชื่อโปรไฟล์ของตน และเพิ่ม/ติดตามเคสตามผู้ดูแลที่ได้รับมอบหมาย ไม่มีสิทธิ์เพิ่มนักเรียนหรือจัดการบัญชี
+- การปิดบัญชีหรือนักเรียนบันทึกเวลาใน `deactivated_at` และเก็บแถวเดิมไว้ แต่ RLS/API จะไม่นำข้อมูลที่ปิดแล้วกลับมาในแอป
+- นักเรียนบันทึกแยกตาม `academic_year` (ปี พ.ศ. 4 หลัก) สามารถนำเข้าปีใหม่โดยสร้างแถวใหม่ โดยรหัสนักเรียนซ้ำได้คนละปี
+- ผู้ใช้ที่อ่านข้อมูลผ่าน Supabase ต้องมี role `admin` หรือ `caretaker` ที่ยังเปิดใช้งาน ระบบไม่ใช้ service-role key
+
+การปิดนักเรียนซ่อนชื่อและข้อมูลนักเรียนจากหน้าเคส/รายงาน แต่ไม่ลบประวัติเคสหรือแถวความสัมพันธ์เดิมในฐานข้อมูล
 
 ## ฟังก์ชันหลัก
 
-- ปฏิทินเคส แสดงเคสของผู้ดูแลหรือเคสทั้งหมด
-- สร้างเคสโดยเลือกนักเรียนและผู้ดูแลได้หลายคน
-- ติดตามผลเคสและบันทึกลายเซ็นผ่าน canvas
-- หน้ารายชื่อนักเรียนและประวัติเคสรายบุคคล
-- Export PDF ผ่านหน้าพิมพ์ของเบราว์เซอร์ (เลือก Save as PDF เพื่อใช้ฟอนต์ภาษาไทยของระบบ) และ Export Excel `.xlsx`
+- ปฏิทินเคส สร้างเคส และติดตามเคส
+- รายชื่อนักเรียนแยกตามปีการศึกษา
+- หน้า admin จัดการบัญชีผู้ดูแล
+- Export PDF/Excel ประวัติเคส รวมบันทึกติดตามและลายเซ็น

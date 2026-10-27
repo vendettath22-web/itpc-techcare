@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, type PointerEvent, type FormEvent } from 'react';
 import Image from 'next/image';
 import { Download, Eraser, X } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
+import { requestApi } from '@/lib/api';
 import { caseTypeName, formatThaiDate, studentName } from '@/lib/cases';
 import { escapeHtml, useSessionCaretaker } from '@/lib/session';
 import { printThaiDocument } from '@/lib/print';
@@ -36,24 +36,26 @@ export default function CaseDetailModal({ caseItem, onClose, onUpdated }: Props)
   useEffect(() => {
     let active = true;
     async function loadHistory() {
-      const [updateResult, signatureResult, caretakerResult] = await Promise.all([
-        supabase.from('case_updates').select('*').eq('case_id', caseItem.id).order('created_at', { ascending: false }),
-        supabase.from('case_signatures').select('*').eq('case_id', caseItem.id).order('signed_at', { ascending: false }),
-        supabase.from('caretakers').select('id, name'),
-      ]);
-      if (!active) return;
-      const loadError = updateResult.error ?? signatureResult.error ?? caretakerResult.error;
-      if (loadError) setError(`โหลดประวัติเคสไม่สำเร็จ: ${loadError.message}`);
-      else {
-        const names = Object.fromEntries((caretakerResult.data ?? []).map((caretaker) => [caretaker.id, caretaker.name]));
+      try {
+        const result = await requestApi<{
+          updates: CaseUpdate[];
+          signatures: CaseSignature[];
+          caretakers: { id: string; name: string }[];
+        }>('caseDetails', { caseId: caseItem.id });
+        if (!active) return;
+        const names = Object.fromEntries(result.caretakers.map((caretaker) => [caretaker.id, caretaker.name]));
         setCaretakerNames(names);
-        setUpdates(((updateResult.data ?? []) as CaseUpdate[]).map((item) => ({
+        setUpdates(result.updates.map((item) => ({
           ...item,
           caretaker_name: names[item.caretaker_id] ?? 'ผู้ดูแล',
         })));
-        setSignatures((signatureResult.data ?? []) as CaseSignature[]);
+        setSignatures(result.signatures);
+      } catch (loadError) {
+        if (!active) return;
+        setError(`โหลดประวัติเคสไม่สำเร็จ: ${loadError instanceof Error ? loadError.message : 'เกิดข้อผิดพลาดที่ไม่ทราบสาเหตุ'}`);
+      } finally {
+        if (active) setLoading(false);
       }
-      setLoading(false);
     }
     void loadHistory();
     return () => { active = false; };
@@ -86,25 +88,28 @@ export default function CaseDetailModal({ caseItem, onClose, onUpdated }: Props)
     if (!user || !isAssigned) return;
     setSavingUpdate(true);
     setError('');
-    const { error: insertError } = await supabase.from('case_updates').insert({
-      case_id: caseItem.id,
-      caretaker_id: user.id,
-      activity_note: activityNote.trim(),
-      result_note: resultNote.trim() || null,
-      next_step: nextStep.trim() || null,
-    });
-    if (insertError) {
-      setError(`บันทึกการอัปเดตไม่สำเร็จ: ${insertError.message}`);
+    try {
+      await requestApi<null>('insertCaseUpdate', {
+        caseId: caseItem.id,
+        caretakerId: user.id,
+        activityNote: activityNote.trim(),
+        resultNote: resultNote.trim() || null,
+        nextStep: nextStep.trim() || null,
+      });
+    } catch (saveError) {
+      setError(`บันทึกการอัปเดตไม่สำเร็จ: ${saveError instanceof Error ? saveError.message : 'เกิดข้อผิดพลาดที่ไม่ทราบสาเหตุ'}`);
       setSavingUpdate(false);
       return;
+    } finally {
+      setSavingUpdate(false);
     }
-    const { error: caseError } = await supabase.from('cases').update({
-      status: markDone ? 'done' : status,
-      updated_at: new Date().toISOString(),
-    }).eq('id', caseItem.id);
-    setSavingUpdate(false);
-    if (caseError) {
-      setError(`บันทึกประวัติแล้ว แต่เปลี่ยนสถานะเคสไม่สำเร็จ: ${caseError.message}`);
+    try {
+      await requestApi<null>('updateCaseStatus', {
+        caseId: caseItem.id,
+        status: markDone ? 'done' : status,
+      });
+    } catch (caseError) {
+      setError(`บันทึกประวัติแล้ว แต่เปลี่ยนสถานะเคสไม่สำเร็จ: ${caseError instanceof Error ? caseError.message : 'เกิดข้อผิดพลาดที่ไม่ทราบสาเหตุ'}`);
       setActivityNote('');
       setResultNote('');
       setNextStep('');
@@ -118,9 +123,12 @@ export default function CaseDetailModal({ caseItem, onClose, onUpdated }: Props)
     setNextStep('');
     setShowUpdateForm(false);
     onUpdated();
-    const { data, error: reloadError } = await supabase.from('case_updates').select('*').eq('case_id', caseItem.id).order('created_at', { ascending: false });
-    if (reloadError) setError(`บันทึกสำเร็จ แต่โหลดประวัติใหม่ไม่สำเร็จ: ${reloadError.message}`);
-    else setUpdates(((data ?? []) as CaseUpdate[]).map((item) => ({ ...item, caretaker_name: caretakerNames[item.caretaker_id] ?? 'ผู้ดูแล' })));
+    try {
+      const data = await requestApi<CaseUpdate[]>('listCaseUpdates', { caseId: caseItem.id });
+      setUpdates(data.map((item) => ({ ...item, caretaker_name: caretakerNames[item.caretaker_id] ?? 'ผู้ดูแล' })));
+    } catch (reloadError) {
+      setError(`บันทึกสำเร็จ แต่โหลดประวัติใหม่ไม่สำเร็จ: ${reloadError instanceof Error ? reloadError.message : 'เกิดข้อผิดพลาดที่ไม่ทราบสาเหตุ'}`);
+    }
   }
 
   async function saveSignature(event: FormEvent<HTMLFormElement>) {
@@ -132,25 +140,29 @@ export default function CaseDetailModal({ caseItem, onClose, onUpdated }: Props)
     }
     setSavingSignature(true);
     setError('');
-    const { data, error: saveError } = await supabase.from('case_signatures').insert({
-      case_id: caseItem.id,
-      signer_name: signerName.trim(),
-      signer_role: signerRole.trim() || 'ผู้รับทราบ',
-      signature_data: canvas.toDataURL('image/png'),
-    }).select('*').single();
-    setSavingSignature(false);
-    if (saveError) {
-      setError(`บันทึกลายเซ็นไม่สำเร็จ: ${saveError.message}`);
+    let savedSignature: CaseSignature;
+    try {
+      savedSignature = await requestApi<CaseSignature>('saveSignature', {
+        caseId: caseItem.id,
+        signerName: signerName.trim(),
+        signerRole: signerRole.trim() || 'ผู้รับทราบ',
+        signatureData: canvas.toDataURL('image/png'),
+      });
+    } catch (saveError) {
+      setError(`บันทึกลายเซ็นไม่สำเร็จ: ${saveError instanceof Error ? saveError.message : 'เกิดข้อผิดพลาดที่ไม่ทราบสาเหตุ'}`);
+      setSavingSignature(false);
       return;
+    } finally {
+      setSavingSignature(false);
     }
-    setSignatures((current) => [data as CaseSignature, ...current]);
+    setSignatures((current) => [savedSignature, ...current]);
     setSignerName('');
     setSignerRole('');
     clearCanvas();
   }
 
   function exportCase() {
-    const html = `<h1>รายงานเคส ITPC Techcare</h1>
+    const html = `<h1>รายงานเคส itpctakecare</h1>
       <p class="muted">พิมพ์เมื่อ ${escapeHtml(formatThaiDate(new Date().toISOString()))}</p>
       <h2>รายละเอียดเคส</h2><div class="card meta">
       <p><b>ประเภท:</b> ${escapeHtml(caseTypeName(caseItem))}</p>
@@ -162,7 +174,7 @@ export default function CaseDetailModal({ caseItem, onClose, onUpdated }: Props)
       <h2>ผู้ดูแลที่เกี่ยวข้อง</h2>${(caseItem.caretakers ?? []).map((caretaker) => `<p>${escapeHtml(caretaker.name)}</p>`).join('')}
       <h2>ประวัติการอัปเดต</h2>${updates.map((item) => `<div class="card"><b>${escapeHtml(item.caretaker_name ?? 'ผู้ดูแล')} · ${escapeHtml(formatThaiDate(item.created_at))}</b><p><b>กิจกรรม:</b> ${escapeHtml(item.activity_note)}</p><p><b>ผลลัพธ์:</b> ${escapeHtml(item.result_note || '-')}</p><p><b>ขั้นตอนถัดไป:</b> ${escapeHtml(item.next_step || '-')}</p></div>`).join('') || '<p>ยังไม่มีประวัติ</p>'}
       <h2>ลายเซ็น</h2>${signatures.map((item) => `<div class="card"><p>${escapeHtml(item.signer_name)} (${escapeHtml(item.signer_role)}) · ${escapeHtml(formatThaiDate(item.signed_at))}</p><img class="signature" src="${escapeHtml(item.signature_data)}" alt="ลายเซ็น ${escapeHtml(item.signer_name)}"></div>`).join('') || '<p>ยังไม่มีลายเซ็น</p>'}`;
-    if (!printThaiDocument('รายงานเคส ITPC Techcare', html)) setError('เปิดหน้าสำหรับพิมพ์ไม่ได้ กรุณาอนุญาตป๊อปอัปแล้วลองอีกครั้ง');
+    if (!printThaiDocument('รายงานเคส itpctakecare', html)) setError('เปิดหน้าสำหรับพิมพ์ไม่ได้ กรุณาอนุญาตป๊อปอัปแล้วลองอีกครั้ง');
   }
 
   return (
