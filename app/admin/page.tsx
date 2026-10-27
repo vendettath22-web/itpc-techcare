@@ -3,18 +3,30 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { UserPlus, UsersRound } from 'lucide-react';
+import { useConfirmDialog } from '@/components/ConfirmDialog';
+import ImagePreview from '@/components/ImagePreview';
 import Navbar from '@/components/Navbar';
 import { requestApi } from '@/lib/api';
+import { prepareProfilePhoto } from '@/lib/profile-image';
+import { useLanguage } from '@/lib/language';
 import { useSessionCaretaker } from '@/lib/session';
 import type { Caretaker } from '@/types/database';
 
-type CaretakerForm = { name: string; role: 'admin' | 'caretaker'; pin: string };
+type CaretakerForm = {
+  name: string;
+  role: 'admin' | 'caretaker';
+  pin: string;
+  phone: string;
+  age: string;
+  photoDataUrl: string;
+};
 
-const emptyForm: CaretakerForm = { name: '', role: 'caretaker', pin: '' };
+const emptyForm: CaretakerForm = { name: '', role: 'caretaker', pin: '', phone: '', age: '', photoDataUrl: '' };
 
 export default function AdminPage() {
   const router = useRouter();
   const user = useSessionCaretaker();
+  const { t } = useLanguage();
   const [caretakers, setCaretakers] = useState<Caretaker[]>([]);
   const [drafts, setDrafts] = useState<Record<string, CaretakerForm>>({});
   const [newCaretaker, setNewCaretaker] = useState<CaretakerForm>(emptyForm);
@@ -22,6 +34,7 @@ export default function AdminPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const { confirm, dialog } = useConfirmDialog();
 
   const loadCaretakers = useCallback(async () => {
     try {
@@ -31,14 +44,17 @@ export default function AdminPage() {
         name: caretaker.name,
         role: caretaker.role,
         pin: '',
+        phone: caretaker.phone ?? '',
+        age: caretaker.age === null || caretaker.age === undefined ? '' : String(caretaker.age),
+        photoDataUrl: '',
       }])));
       setError('');
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : 'โหลดบัญชีผู้ดูแลไม่สำเร็จ');
+      setError(loadError instanceof Error ? loadError.message : t('โหลดบัญชีผู้ดูแลไม่สำเร็จ'));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     if (user === undefined) return;
@@ -51,16 +67,21 @@ export default function AdminPage() {
 
   async function createCaretaker(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!await confirm({
+      title: `${t('เพิ่มบัญชี')} ${newCaretaker.name}?`,
+      description: t('ตรวจสอบชื่อและข้อมูลบัญชีก่อนยืนยันการเพิ่ม'),
+      confirmLabel: t('เพิ่มบัญชี'),
+    })) return;
     setSaving(true);
     setError('');
     setNotice('');
     try {
       await requestApi('createCaretaker', newCaretaker);
       setNewCaretaker(emptyForm);
-      setNotice('เพิ่มบัญชีผู้ดูแลแล้ว');
+      setNotice(t('เพิ่มบัญชีผู้ดูแลแล้ว'));
       await loadCaretakers();
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : 'เพิ่มบัญชีไม่สำเร็จ');
+      setError(saveError instanceof Error ? saveError.message : t('เพิ่มบัญชีไม่สำเร็จ'));
     } finally {
       setSaving(false);
     }
@@ -69,102 +90,156 @@ export default function AdminPage() {
   async function updateCaretaker(id: string) {
     const draft = drafts[id];
     if (!draft) return;
+    const caretaker = caretakers.find((item) => item.id === id);
+    if (!await confirm({
+      title: t('บันทึกการแก้ไขบัญชี?'),
+      description: `${t('ข้อมูลบัญชี')} ${caretaker?.name ?? ''} ${t('จะถูกเปลี่ยนตามรายการที่แก้ไข')}`,
+      confirmLabel: t('บันทึกการแก้ไข'),
+    })) return;
     setSaving(true);
     setError('');
     setNotice('');
     try {
       await requestApi('updateCaretaker', { id, ...draft });
-      setNotice('บันทึกบัญชีแล้ว');
+      setNotice(t('บันทึกบัญชีแล้ว'));
       await loadCaretakers();
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : 'แก้ไขบัญชีไม่สำเร็จ');
+      setError(saveError instanceof Error ? saveError.message : t('แก้ไขบัญชีไม่สำเร็จ'));
     } finally {
       setSaving(false);
     }
   }
 
   async function deactivateCaretaker(caretaker: Caretaker) {
-    if (!window.confirm(`ยืนยันปิดบัญชี ${caretaker.name}? บัญชีจะเข้าสู่ระบบไม่ได้ แต่ข้อมูลเดิมยังอยู่`)) return;
+    if (!await confirm({
+      title: `${t('ปิดบัญชี')} ${caretaker.name}?`,
+      description: t('บัญชีนี้จะเข้าสู่ระบบไม่ได้ แต่ข้อมูลเดิมจะยังถูกเก็บไว้'),
+      confirmLabel: t('ปิดบัญชี'),
+      tone: 'danger',
+    })) return;
     setSaving(true);
     setError('');
     setNotice('');
     try {
       await requestApi('deactivateCaretaker', { id: caretaker.id });
-      setNotice('ปิดบัญชีแล้ว');
+      setNotice(t('ปิดบัญชีแล้ว'));
       await loadCaretakers();
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : 'ปิดบัญชีไม่สำเร็จ');
+      setError(saveError instanceof Error ? saveError.message : t('ปิดบัญชีไม่สำเร็จ'));
     } finally {
       setSaving(false);
     }
   }
 
   if (!user || user.role !== 'admin') {
-    return <div className="grid min-h-screen place-items-center text-gray-500">กำลังตรวจสอบสิทธิ์ admin...</div>;
+    return <div className="grid min-h-screen place-items-center text-gray-500">{t('กำลังตรวจสอบสิทธิ์ admin...')}</div>;
   }
 
   return (
     <main className="min-h-screen bg-[#faf9fb]">
+      {dialog}
       <Navbar />
       <section className="mx-auto max-w-5xl px-4 py-7 sm:px-6 sm:py-10">
         <div className="mb-6">
-          <p className="text-sm font-medium text-primary">ตั้งค่าระบบ</p>
-          <h1 className="mt-1 text-2xl font-bold text-gray-800 sm:text-3xl">จัดการบัญชีผู้ดูแล</h1>
-          <p className="mt-2 text-sm text-gray-500">ผู้ดูแลระบบเพิ่ม แก้ไขบทบาท เปลี่ยน PIN และปิดบัญชีได้</p>
+          <p className="text-sm font-medium text-primary">{t('ตั้งค่าระบบ')}</p>
+          <h1 className="mt-1 text-2xl font-bold text-gray-800 sm:text-3xl">{t('จัดการบัญชีผู้ดูแล')}</h1>
+          <p className="mt-2 text-sm text-gray-500">{t('ผู้ดูแลระบบเพิ่ม แก้ไขบทบาท เปลี่ยน PIN และปิดบัญชีได้')}</p>
         </div>
 
         {error && <p role="alert" className="mb-4 rounded-xl bg-red-50 p-3 text-sm text-red-700">{error}</p>}
         {notice && <p role="status" className="mb-4 rounded-xl bg-green-50 p-3 text-sm text-green-700">{notice}</p>}
+        {caretakers.some((caretaker) => caretaker.profile_photo_error) && (
+          <p role="status" className="mb-4 rounded-xl bg-amber-50 p-3 text-sm text-amber-800">
+            {t('โหลดบัญชีได้แล้ว แต่แสดงรูปโปรไฟล์ไม่ได้:')} {caretakers.find((caretaker) => caretaker.profile_photo_error)?.profile_photo_error}
+          </p>
+        )}
 
         <form onSubmit={createCaretaker} className="mb-7 rounded-2xl border border-[#eee9ef] bg-white p-5 shadow-sm">
-          <div className="mb-4 flex items-center gap-2 font-semibold text-gray-800"><UserPlus size={19} className="text-primary" />เพิ่มบัญชี</div>
+          <div className="mb-4 flex items-center gap-2 font-semibold text-gray-800"><UserPlus size={19} className="text-primary" />{t('เพิ่มบัญชี')}</div>
           <div className="grid gap-3 sm:grid-cols-3">
-            <label className="text-sm text-gray-600">ชื่อผู้ดูแล
+            <label className="text-sm text-gray-600">{t('ชื่อผู้ดูแล')}
               <input required value={newCaretaker.name} onChange={(event) => setNewCaretaker({ ...newCaretaker, name: event.target.value })} className="mt-1 w-full rounded-xl border border-gray-200 px-3 py-2.5" />
             </label>
-            <label className="text-sm text-gray-600">PIN (4-12 หลัก)
+            <label className="text-sm text-gray-600">{t('PIN (4-12 หลัก)')}
               <input required minLength={4} maxLength={12} pattern="[0-9]{4,12}" inputMode="numeric" value={newCaretaker.pin} onChange={(event) => setNewCaretaker({ ...newCaretaker, pin: event.target.value })} className="mt-1 w-full rounded-xl border border-gray-200 px-3 py-2.5" />
             </label>
-            <label className="text-sm text-gray-600">บทบาท
+            <label className="text-sm text-gray-600">{t('บทบาท')}
               <select value={newCaretaker.role} onChange={(event) => setNewCaretaker({ ...newCaretaker, role: event.target.value as CaretakerForm['role'] })} className="mt-1 w-full rounded-xl border border-gray-200 px-3 py-2.5">
-                <option value="caretaker">ผู้ดูแล</option>
+                <option value="caretaker">{t('ผู้ดูแล')}</option>
                 <option value="admin">Admin</option>
               </select>
             </label>
+            <label className="text-sm text-gray-600">{t('เบอร์มือถือ')}
+              <input type="tel" inputMode="tel" pattern="[0-9+() -]{8,20}" value={newCaretaker.phone} onChange={(event) => setNewCaretaker({ ...newCaretaker, phone: event.target.value })} className="mt-1 w-full rounded-xl border border-gray-200 px-3 py-2.5" placeholder="เช่น 08X-XXX-XXXX" />
+            </label>
+            <label className="text-sm text-gray-600">{t('อายุ')}
+              <input type="number" min={18} max={120} value={newCaretaker.age} onChange={(event) => setNewCaretaker({ ...newCaretaker, age: event.target.value })} className="mt-1 w-full rounded-xl border border-gray-200 px-3 py-2.5" placeholder="ปี" />
+            </label>
+            <label className="text-sm text-gray-600 sm:col-span-2">{t('รูปโปรไฟล์')}
+              <input type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => {
+                const file = event.target.files?.[0];
+                if (file) void prepareProfilePhoto(file).then((photoDataUrl) => setNewCaretaker((current) => ({ ...current, photoDataUrl }))).catch((photoError: unknown) => setError(photoError instanceof Error ? photoError.message : t('เตรียมรูปภาพไม่สำเร็จ')));
+              }} className="mt-1 w-full rounded-xl border border-gray-200 px-3 py-2 text-sm" />
+              {newCaretaker.photoDataUrl && <ImagePreview src={newCaretaker.photoDataUrl} alt="ตัวอย่างรูปโปรไฟล์" width={64} height={64} className="mt-2 h-16 w-16" />}
+            </label>
           </div>
-          <button disabled={saving} className="mt-4 rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-hover disabled:opacity-60">{saving ? 'กำลังบันทึก...' : 'เพิ่มบัญชี'}</button>
+          <button disabled={saving} className="mt-4 rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-hover disabled:opacity-60">{saving ? t('กำลังบันทึก...') : t('เพิ่มบัญชี')}</button>
         </form>
 
-        <div className="mb-3 flex items-center gap-2"><UsersRound size={18} className="text-primary" /><h2 className="font-bold text-gray-800">บัญชีทั้งหมด ({caretakers.length})</h2></div>
-        {loading ? <p className="py-12 text-center text-gray-500">กำลังโหลดบัญชี...</p> : (
+        <div className="mb-3 flex items-center gap-2"><UsersRound size={18} className="text-primary" /><h2 className="font-bold text-gray-800">{t('บัญชีทั้งหมด')} ({caretakers.length})</h2></div>
+        {loading ? <p className="py-12 text-center text-gray-500">{t('กำลังโหลดบัญชี...')}</p> : (
           <div className="space-y-3">
             {caretakers.map((caretaker) => {
-              const draft = drafts[caretaker.id] ?? { name: caretaker.name, role: caretaker.role, pin: '' };
+              const draft = drafts[caretaker.id] ?? {
+                name: caretaker.name,
+                role: caretaker.role,
+                pin: '',
+                phone: caretaker.phone ?? '',
+                age: caretaker.age === null || caretaker.age === undefined ? '' : String(caretaker.age),
+                photoDataUrl: '',
+              };
               return (
                 <article key={caretaker.id} className={`rounded-2xl border bg-white p-4 sm:p-5 ${caretaker.deactivated_at ? 'border-gray-200 opacity-70' : 'border-[#eee9ef]'}`}>
                   <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                    <p className="font-semibold text-gray-800">{caretaker.name}<span className={`ml-2 rounded-full px-2 py-1 text-xs ${caretaker.role === 'admin' ? 'bg-primary-light text-primary' : 'bg-gray-100 text-gray-600'}`}>{caretaker.role === 'admin' ? 'Admin' : 'ผู้ดูแล'}</span></p>
-                    <p className="text-xs text-gray-500">{caretaker.deactivated_at ? `ปิดบัญชี ${new Date(caretaker.deactivated_at).toLocaleString('th-TH')}` : 'ใช้งานอยู่'}</p>
+                    <div className="flex items-center gap-3">
+                      {(draft.photoDataUrl || caretaker.profile_photo_url) && <ImagePreview src={draft.photoDataUrl || caretaker.profile_photo_url || ''} alt={`รูปโปรไฟล์ ${caretaker.name}`} width={44} height={44} className="h-11 w-11" />}
+                      <p className="font-semibold text-gray-800">{caretaker.name}<span className={`ml-2 rounded-full px-2 py-1 text-xs ${caretaker.role === 'admin' ? 'bg-primary-light text-primary' : 'bg-gray-100 text-gray-600'}`}>{caretaker.role === 'admin' ? t('Admin') : t('ผู้ดูแล')}</span></p>
+                    </div>
+                    <p className="text-xs text-gray-500">{caretaker.deactivated_at ? `${t('ปิดบัญชี')} ${new Date(caretaker.deactivated_at).toLocaleString()}` : t('ใช้งานอยู่')}</p>
                   </div>
                   {!caretaker.deactivated_at && (
                     <>
                       <div className="grid gap-3 sm:grid-cols-[1fr_180px_1fr]">
-                        <label className="text-xs text-gray-500">ชื่อ
+                        <label className="text-xs text-gray-500">{t('ชื่อ')}
                           <input value={draft.name} onChange={(event) => setDrafts({ ...drafts, [caretaker.id]: { ...draft, name: event.target.value } })} className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-800" />
                         </label>
-                        <label className="text-xs text-gray-500">บทบาท
+                        <label className="text-xs text-gray-500">{t('บทบาท')}
                           <select value={draft.role} onChange={(event) => setDrafts({ ...drafts, [caretaker.id]: { ...draft, role: event.target.value as CaretakerForm['role'] } })} className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-800">
-                            <option value="caretaker">ผู้ดูแล</option>
+                            <option value="caretaker">{t('ผู้ดูแล')}</option>
                             <option value="admin">Admin</option>
                           </select>
                         </label>
-                        <label className="text-xs text-gray-500">ตั้ง PIN ใหม่ (เว้นว่างถ้าไม่เปลี่ยน)
+                        <label className="text-xs text-gray-500">{t('ตั้ง PIN ใหม่ (เว้นว่างถ้าไม่เปลี่ยน)')}
                           <input minLength={4} maxLength={12} pattern="[0-9]{4,12}" inputMode="numeric" value={draft.pin} onChange={(event) => setDrafts({ ...drafts, [caretaker.id]: { ...draft, pin: event.target.value } })} className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-800" />
                         </label>
                       </div>
+                      <div className="mt-3 grid gap-3 sm:grid-cols-3">
+                        <label className="text-xs text-gray-500">{t('เบอร์มือถือ')}
+                          <input type="tel" inputMode="tel" pattern="[0-9+() -]{8,20}" value={draft.phone} onChange={(event) => setDrafts({ ...drafts, [caretaker.id]: { ...draft, phone: event.target.value } })} className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-800" />
+                        </label>
+                        <label className="text-xs text-gray-500">{t('อายุ')}
+                          <input type="number" min={18} max={120} value={draft.age} onChange={(event) => setDrafts({ ...drafts, [caretaker.id]: { ...draft, age: event.target.value } })} className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-800" />
+                        </label>
+                        <label className="text-xs text-gray-500">{t('เปลี่ยนรูปโปรไฟล์')}
+                          <input type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => {
+                            const file = event.target.files?.[0];
+                            if (file) void prepareProfilePhoto(file).then((photoDataUrl) => setDrafts((current) => ({ ...current, [caretaker.id]: { ...draft, photoDataUrl } }))).catch((photoError: unknown) => setError(photoError instanceof Error ? photoError.message : t('เตรียมรูปภาพไม่สำเร็จ')));
+                          }} className="mt-1 w-full rounded-lg border border-gray-200 px-2 py-1.5 text-xs text-gray-800" />
+                        </label>
+                      </div>
                       <div className="mt-3 flex justify-end gap-2">
-                        <button disabled={saving || caretaker.id === user.id} onClick={() => void deactivateCaretaker(caretaker)} className="rounded-lg border border-red-200 px-3 py-2 text-sm text-red-700 hover:bg-red-50 disabled:opacity-40">ปิดบัญชี</button>
-                        <button disabled={saving} onClick={() => void updateCaretaker(caretaker.id)} className="rounded-lg bg-primary px-3 py-2 text-sm font-medium text-white hover:bg-primary-hover disabled:opacity-60">บันทึก</button>
+                        <button disabled={saving || caretaker.id === user.id} onClick={() => void deactivateCaretaker(caretaker)} className="rounded-lg border border-red-200 px-3 py-2 text-sm text-red-700 hover:bg-red-50 disabled:opacity-40">{t('ปิดบัญชี')}</button>
+                        <button disabled={saving} onClick={() => void updateCaretaker(caretaker.id)} className="rounded-lg bg-primary px-3 py-2 text-sm font-medium text-white hover:bg-primary-hover disabled:opacity-60">{t('บันทึก')}</button>
                       </div>
                     </>
                   )}

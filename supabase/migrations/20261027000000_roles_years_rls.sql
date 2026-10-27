@@ -433,7 +433,7 @@ as $$
 declare
   v_case_id uuid;
 begin
-  if public.app_caretaker_role() not in ('admin', 'caretaker')
+  if coalesce(public.app_caretaker_role() not in ('admin', 'caretaker'), true)
      or auth.uid() is distinct from p_created_by then
     raise exception 'Authenticated caretaker required';
   end if;

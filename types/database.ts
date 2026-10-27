@@ -2,6 +2,11 @@ export interface Caretaker {
   id: string;
   name: string;
   role: 'admin' | 'caretaker';
+  phone?: string | null;
+  age?: number | null;
+  profile_photo_url?: string | null;
+  profile_photo_error?: string | null;
+  profile_image_path?: string | null;
   deactivated_at: string | null;
   created_at: string;
 }
@@ -16,6 +21,8 @@ export interface Student {
   room: number | null;
   gender: string | null;
   academic_year: string;
+  profile_image_path?: string | null;
+  profile_photo_url?: string | null;
   deactivated_at: string | null;
   case_count?: number;
 }
@@ -28,6 +35,7 @@ export interface Case {
   scheduled_at: string;
   status: 'planned' | 'done';
   created_by: string;
+  created_by_name?: string | null;
   created_at: string;
   updated_at: string;
   students?: Student[];

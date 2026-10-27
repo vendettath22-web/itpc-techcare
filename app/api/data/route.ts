@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type { Case, Caretaker, Student } from '@/types/database';
 
@@ -6,7 +6,8 @@ type ApiBody = Record<string, unknown> & { action?: unknown };
 type CaseStudentRow = { case_id: string; student_id: string };
 type CaseCaretakerRow = { case_id: string; caretaker_id: string };
 type SessionClaims = { sub: string; exp: number };
-type SessionCaretaker = Pick<Caretaker, 'id' | 'name' | 'role'>;
+type SessionCaretaker = Pick<Caretaker, 'id' | 'name' | 'role' | 'phone' | 'age'>;
+type PublicAdminContact = { id: string; name: string; phone: string | null; profile_image_path: string | null };
 
 const COOKIE_NAME = 'itpc_session';
 const SESSION_SECONDS = 60 * 60 * 8;
@@ -39,6 +40,59 @@ function stringArray(body: ApiBody, key: string): string[] {
     throw new Error(`Invalid or missing ${key}`);
   }
   return value;
+}
+
+function optionalInteger(body: ApiBody, key: string): number | null {
+  const value = body[key];
+  if (value === undefined || value === null || value === '') return null;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 18 || parsed > 120) throw new Error(`Invalid ${key}`);
+  return parsed;
+}
+
+function optionalPhone(body: ApiBody): string | null {
+  const phone = optionalString(body, 'phone');
+  if (phone && !/^[0-9+() -]{8,20}$/.test(phone)) throw new Error('Invalid phone number');
+  return phone;
+}
+
+async function uploadCaretakerPhoto(
+  supabase: SupabaseClient,
+  caretakerId: string,
+  value: unknown,
+): Promise<string | null> {
+  return uploadProfilePhoto(supabase, 'caretaker-photos', caretakerId, value);
+}
+
+async function uploadProfilePhoto(
+  supabase: SupabaseClient,
+  bucket: 'caretaker-photos' | 'student-photos',
+  profileId: string,
+  value: unknown,
+): Promise<string | null> {
+  if (value === undefined || value === null || value === '') return null;
+  if (typeof value !== 'string' || value.length > 3_000_000) {
+    throw new Error('รูปภาพมีขนาดใหญ่เกินไป');
+  }
+  const match = /^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/=]+)$/.exec(value);
+  if (!match) throw new Error('รองรับเฉพาะไฟล์ JPG, PNG หรือ WebP');
+  const contentType = `image/${match[1]}`;
+  const image = Buffer.from(match[2], 'base64');
+  if (!image.length || image.length > 2 * 1024 * 1024) {
+    throw new Error('รูปภาพต้องมีขนาดไม่เกิน 2 MB');
+  }
+  const path = `${profileId}/profile`;
+  const { error } = await supabase.storage
+    .from(bucket)
+    .upload(path, image, { contentType, upsert: true, cacheControl: '3600' });
+  if (error?.message.toLowerCase().includes('bucket not found')) {
+    const migration = bucket === 'student-photos'
+      ? '20261027000004_profiles_student_photos.sql'
+      : '20261027000003_caretaker_profile_fields.sql';
+    throw new Error(`ยังไม่มีพื้นที่เก็บรูปใน Supabase กรุณารัน migration ${migration} แล้วลองใหม่`);
+  }
+  throwIfError(error);
+  return path;
 }
 
 function throwIfError(error: { message: string } | null): void {
@@ -139,7 +193,7 @@ async function getActiveCaretaker(
   const client = supabaseClient(key, token);
   const { data, error } = await client
     .from('caretakers')
-    .select('id, name, role')
+    .select('id, name, role, phone, age')
     .eq('id', id)
     .is('deactivated_at', null)
     .maybeSingle();
@@ -159,6 +213,36 @@ export async function POST(request: Request) {
     const { url, key, jwtSecret } = environment();
     const action = body.action;
 
+    if (action === 'listLoginCaretakers') {
+      const supabase = createClient(url, key, {
+        auth: { autoRefreshToken: false, persistSession: false, detectSessionInUrl: false },
+      });
+      const { data, error } = await supabase.rpc('list_login_caretakers');
+      throwIfError(error);
+      return response(data ?? []);
+    }
+
+    if (action === 'listAdminContacts') {
+      const supabase = createClient(url, key, {
+        auth: { autoRefreshToken: false, persistSession: false, detectSessionInUrl: false },
+      });
+      const { data, error } = await supabase.rpc('list_public_admin_contacts');
+      if (error?.message.toLowerCase().includes('list_public_admin_contacts')) {
+        throw new Error('ข้อมูลติดต่อแอดมินยังไม่พร้อม กรุณารัน migration 20261027000005_admin_contact_info.sql บน Supabase');
+      }
+      throwIfError(error);
+      const contacts = await Promise.all(((data ?? []) as PublicAdminContact[]).map(async (contact) => {
+        if (!contact.profile_image_path) return { ...contact, profile_photo_url: null };
+        const { data: signedUrl, error: signedUrlError } = await supabase.storage
+          .from('caretaker-photos')
+          .createSignedUrl(contact.profile_image_path, 3600);
+        throwIfError(signedUrlError);
+        if (!signedUrl?.signedUrl) throw new Error('สร้างลิงก์รูปแอดมินไม่สำเร็จ');
+        return { ...contact, profile_photo_url: signedUrl.signedUrl };
+      }));
+      return response(contacts);
+    }
+
     if (action === 'verifyCaretakerPin') {
       const supabase = createClient(url, key, {
         auth: { autoRefreshToken: false, persistSession: false, detectSessionInUrl: false },
@@ -168,8 +252,12 @@ export async function POST(request: Request) {
       });
       throwIfError(error);
       const matches = Array.isArray(data) ? data : data ? [data] : [];
-      if (matches.length !== 1) return response('PIN ไม่ถูกต้องหรือบัญชีถูกปิดใช้งาน', 401);
-      const caretaker = matches[0] as SessionCaretaker;
+      const selectedCaretakerId = requiredString(body, 'caretakerId');
+      const caretaker = matches.find((match) => {
+        return typeof match === 'object' && match !== null && 'id' in match &&
+          match.id === selectedCaretakerId;
+      }) as SessionCaretaker | undefined;
+      if (!caretaker) return response('PIN ไม่ถูกต้องสำหรับบัญชีที่เลือก', 401);
       if (!caretaker.id || !caretaker.name || !['admin', 'caretaker'].includes(caretaker.role)) {
         return response('ข้อมูลบัญชีไม่ถูกต้อง', 500);
       }
@@ -207,38 +295,92 @@ export async function POST(request: Request) {
         if (!isAdmin(caretaker)) return response('ต้องใช้สิทธิ์ admin', 403);
         const { data, error } = await supabase
           .from('caretakers')
-          .select('id, name, role, created_at, deactivated_at')
+          .select('id, name, role, created_at, deactivated_at, phone, age, profile_image_path')
           .order('name');
         throwIfError(error);
-        return response(data ?? []);
+        const caretakerList = await Promise.all((data ?? []).map(async (item) => {
+          if (!item.profile_image_path) return { ...item, profile_photo_url: null, profile_photo_error: null };
+          const { data: signedUrl, error: signedUrlError } = await supabase.storage
+            .from('caretaker-photos')
+            .createSignedUrl(item.profile_image_path, 3600);
+          if (signedUrlError?.message.toLowerCase().includes('bucket not found')) {
+            return {
+              ...item,
+              profile_photo_url: null,
+              profile_photo_error: 'ยังไม่มีพื้นที่เก็บรูปใน Supabase (migration 20261027000003 ยังไม่ได้รัน)',
+            };
+          }
+          throwIfError(signedUrlError);
+          if (!signedUrl?.signedUrl) throw new Error('สร้างลิงก์รูปโปรไฟล์ไม่สำเร็จ');
+          return { ...item, profile_photo_url: signedUrl.signedUrl, profile_photo_error: null };
+        }));
+        return response(caretakerList);
       }
       case 'updateCaretakerProfile': {
+        const name = requiredString(body, 'name');
+        const phone = optionalPhone(body);
+        const age = optionalInteger(body, 'age');
+        const photoPath = await uploadCaretakerPhoto(supabase, caretaker.id, body.photoDataUrl);
         const { data, error } = await supabase
           .from('caretakers')
-          .update({ name: requiredString(body, 'name') })
+          .update({
+            name,
+            phone,
+            age,
+            ...(photoPath ? { profile_image_path: photoPath } : {}),
+          })
           .eq('id', caretaker.id)
-          .select('id, name, role')
+          .select('id, name, role, phone, age')
           .single();
         throwIfError(error);
         return response(data);
       }
       case 'createCaretaker': {
         if (!isAdmin(caretaker)) return response('ต้องใช้สิทธิ์ admin', 403);
+        const id = randomUUID();
+        const name = requiredString(body, 'name');
+        const pin = requiredString(body, 'pin');
+        const phone = optionalPhone(body);
+        const age = optionalInteger(body, 'age');
+        const photoPath = await uploadCaretakerPhoto(supabase, id, body.photoDataUrl);
         const { data, error } = await supabase.rpc('admin_create_caretaker', {
-          p_name: requiredString(body, 'name'),
-          p_pin: requiredString(body, 'pin'),
+          p_id: id,
+          p_name: name,
+          p_pin: pin,
           p_role: body.role === 'admin' ? 'admin' : 'caretaker',
+          p_phone: phone,
+          p_age: age,
+          p_profile_image_path: photoPath,
         });
+        if (error && photoPath) {
+          const { error: removeError } = await supabase.storage.from('caretaker-photos').remove([photoPath]);
+          if (removeError) throw new Error(`${error.message}; ลบรูปที่อัปโหลดไม่สำเร็จ: ${removeError.message}`);
+        }
         throwIfError(error);
         return response(data);
       }
       case 'updateCaretaker': {
         if (!isAdmin(caretaker)) return response('ต้องใช้สิทธิ์ admin', 403);
+        const id = requiredString(body, 'id');
+        const { data: current, error: currentError } = await supabase
+          .from('caretakers')
+          .select('profile_image_path')
+          .eq('id', id)
+          .maybeSingle();
+        throwIfError(currentError);
+        if (!current) return response('Caretaker not found', 404);
+        const name = requiredString(body, 'name');
+        const phone = optionalPhone(body);
+        const age = optionalInteger(body, 'age');
+        const uploadedPath = await uploadCaretakerPhoto(supabase, id, body.photoDataUrl);
         const { data, error } = await supabase.rpc('admin_update_caretaker', {
-          p_id: requiredString(body, 'id'),
-          p_name: requiredString(body, 'name'),
+          p_id: id,
+          p_name: name,
           p_role: body.role === 'admin' ? 'admin' : 'caretaker',
           p_pin: optionalString(body, 'pin'),
+          p_phone: phone,
+          p_age: age,
+          p_profile_image_path: uploadedPath ?? current.profile_image_path,
         });
         throwIfError(error);
         return response(data);
@@ -271,15 +413,72 @@ export async function POST(request: Request) {
         }
         const { data, error } = await query;
         throwIfError(error);
-        return response(data ?? []);
+        const students = await Promise.all((data ?? []).map(async (student) => {
+          if (!student.profile_image_path) return { ...student, profile_photo_url: null };
+          const { data: signedUrl, error: signedUrlError } = await supabase.storage
+            .from('student-photos')
+            .createSignedUrl(student.profile_image_path, 3600);
+          if (signedUrlError?.message.toLowerCase().includes('bucket not found')) {
+            return { ...student, profile_photo_url: null };
+          }
+          throwIfError(signedUrlError);
+          if (!signedUrl?.signedUrl) throw new Error('สร้างลิงก์รูปนักเรียนไม่สำเร็จ');
+          return { ...student, profile_photo_url: signedUrl.signedUrl };
+        }));
+        return response(students);
       }
       case 'createStudent': {
         if (!isAdmin(caretaker)) return response('ต้องใช้สิทธิ์ admin', 403);
+        const id = randomUUID();
         const room = body.room === '' || body.room === null ? null : Number(body.room);
         if (room !== null && (!Number.isInteger(room) || room < 1)) {
           return response('Invalid room', 400);
         }
+        const academicYear = requiredString(body, 'academicYear');
+        const studentId = optionalString(body, 'studentId');
+        const firstName = optionalString(body, 'firstNameTh');
+        const lastName = optionalString(body, 'lastNameTh');
+        const nickname = optionalString(body, 'nicknameTh');
+        const grade = optionalString(body, 'grade');
+        const gender = optionalString(body, 'gender');
+        const photoPath = await uploadProfilePhoto(supabase, 'student-photos', id, body.photoDataUrl);
         const { data, error } = await supabase.rpc('admin_create_student', {
+          p_id: id,
+          p_student_id: studentId,
+          p_first_name_th: firstName,
+          p_last_name_th: lastName,
+          p_nickname_th: nickname,
+          p_grade: grade,
+          p_room: room,
+          p_gender: gender,
+          p_academic_year: academicYear,
+          p_profile_image_path: photoPath,
+        });
+        if (error && photoPath) {
+          const { error: removeError } = await supabase.storage.from('student-photos').remove([photoPath]);
+          if (removeError) throw new Error(`${error.message}; ลบรูปนักเรียนที่อัปโหลดไม่สำเร็จ: ${removeError.message}`);
+        }
+        throwIfError(error);
+        return response(data);
+      }
+      case 'updateStudent': {
+        if (!isAdmin(caretaker)) return response('ต้องใช้สิทธิ์ admin', 403);
+        const id = requiredString(body, 'id');
+        const room = body.room === '' || body.room === null ? null : Number(body.room);
+        if (room !== null && (!Number.isInteger(room) || room < 1)) {
+          return response('Invalid room', 400);
+        }
+        const { data: current, error: currentError } = await supabase
+          .from('students')
+          .select('profile_image_path')
+          .eq('id', id)
+          .is('deactivated_at', null)
+          .maybeSingle();
+        throwIfError(currentError);
+        if (!current) return response('ไม่พบข้อมูลนักเรียนที่เปิดใช้งาน', 404);
+        const uploadedPath = await uploadProfilePhoto(supabase, 'student-photos', id, body.photoDataUrl);
+        const { error } = await supabase.rpc('admin_update_student', {
+          p_id: id,
           p_student_id: optionalString(body, 'studentId'),
           p_first_name_th: optionalString(body, 'firstNameTh'),
           p_last_name_th: optionalString(body, 'lastNameTh'),
@@ -288,9 +487,13 @@ export async function POST(request: Request) {
           p_room: room,
           p_gender: optionalString(body, 'gender'),
           p_academic_year: requiredString(body, 'academicYear'),
+          p_profile_image_path: uploadedPath ?? current.profile_image_path,
         });
+        if (error?.message.toLowerCase().includes('admin_update_student')) {
+          throw new Error('ระบบแก้ไขข้อมูลนักเรียนยังไม่พร้อม กรุณารัน migration 20261027000006_admin_update_student.sql แล้วลองใหม่');
+        }
         throwIfError(error);
-        return response(data);
+        return response(null);
       }
       case 'deactivateStudent': {
         if (!isAdmin(caretaker)) return response('ต้องใช้สิทธิ์ admin', 403);
@@ -308,7 +511,16 @@ export async function POST(request: Request) {
           .is('deactivated_at', null)
           .maybeSingle();
         throwIfError(error);
-        return response(data);
+        if (!data || !data.profile_image_path) return response(data);
+        const { data: signedUrl, error: signedUrlError } = await supabase.storage
+          .from('student-photos')
+          .createSignedUrl(data.profile_image_path, 3600);
+        if (signedUrlError?.message.toLowerCase().includes('bucket not found')) {
+          return response(data);
+        }
+        throwIfError(signedUrlError);
+        if (!signedUrl?.signedUrl) throw new Error('สร้างลิงก์รูปนักเรียนไม่สำเร็จ');
+        return response({ ...data, profile_photo_url: signedUrl.signedUrl });
       }
       case 'fetchCases': {
         const [caseResult, studentLinks, caretakerLinks, studentResult, caretakerResult] =
@@ -350,6 +562,7 @@ export async function POST(request: Request) {
         return response(((caseResult.data ?? []) as Case[]).map((caseItem) => ({
           ...caseItem,
           created_by: caretakersById.has(caseItem.created_by) ? caseItem.created_by : '',
+          created_by_name: caretakersById.get(caseItem.created_by)?.name ?? null,
           students: studentsByCase.get(caseItem.id) ?? [],
           caretakers: caretakersByCase.get(caseItem.id) ?? [],
         })));

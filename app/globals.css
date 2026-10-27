@@ -1,8 +1,8 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #faf8fc;
+  --foreground: #211a27;
   color-scheme: light;
 }
 
@@ -11,9 +11,9 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
-  --color-primary: #9f77b4;
-  --color-primary-hover: #8b63a0;
-  --color-primary-light: #f3ebf7;
+  --color-primary: #70418a;
+  --color-primary-hover: #5d3475;
+  --color-primary-light: #f2eaf7;
 
   --color-pastel-mint: #e2f0d9;
   --color-pastel-peach: #fce4d6;
@@ -35,6 +35,15 @@ textarea {
   color: #29242d;
 }
 
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 3px solid #c8a9da;
+  outline-offset: 2px;
+}
+
 input::placeholder,
 textarea::placeholder {
   color: #6b6570;
@@ -44,8 +53,4 @@ textarea::placeholder {
 select option {
   color: #000000;
   background: #ffffff;
-}
-
-#caretaker {
-  color: #000000;
 }
