@@ -21,7 +21,7 @@ npm install
 npm run dev
 ```
 
-เปิด `http://localhost:3000/takecare` (หน้าเข้าสู่ระบบ `/takecare/login`)
+เปิด `http://localhost:3000` (หน้าเข้าสู่ระบบ `/login`)
 
 ## ติดตั้งฐานข้อมูลและ RLS
 

@@ -142,7 +142,7 @@ export default function Home() {
   if (!user) return <div className="grid min-h-screen place-items-center text-gray-500">{t('กำลังตรวจสอบการเข้าสู่ระบบ...')}</div>;
 
   return (
-    <main className="min-h-screen bg-[#faf8fc]">
+    <main className="min-h-screen bg-[#faf8fc] transition-[padding] duration-300 ease-in-out lg:pl-[var(--sidebar-width,18rem)]">
       <Navbar />
       <section className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-9">
         <div className="mb-7 flex flex-wrap items-end justify-between gap-4">

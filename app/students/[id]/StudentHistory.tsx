@@ -194,7 +194,7 @@ export default function StudentHistory({ id }: { id: string }) {
 
   if (!user) return <div className="grid min-h-screen place-items-center text-gray-500">{t('กำลังตรวจสอบการเข้าสู่ระบบ...')}</div>;
 
-  return <main className="min-h-screen bg-[#faf9fb]">
+  return <main className="min-h-screen bg-[#faf9fb] transition-[padding] duration-300 ease-in-out lg:pl-[var(--sidebar-width,18rem)]">
     <Navbar />
     <section className="mx-auto max-w-5xl px-4 py-7 sm:px-6 sm:py-10">
       <Link href="/students" className="mb-5 inline-flex items-center gap-2 text-sm font-medium text-gray-500 hover:text-primary"><ArrowLeft size={17} />{t('กลับไปหน้ารายชื่อนักเรียน')}</Link>

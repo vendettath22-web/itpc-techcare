@@ -179,7 +179,7 @@ export default function StudentsPage() {
 
   if (!user) return <div className="grid min-h-screen place-items-center text-gray-500">{t('กำลังตรวจสอบการเข้าสู่ระบบ...')}</div>;
 
-  return <main className="min-h-screen bg-[#faf9fb]">
+  return <main className="min-h-screen bg-[#faf9fb] transition-[padding] duration-300 ease-in-out lg:pl-[var(--sidebar-width,18rem)]">
     {dialog}
     <Navbar />
     <section className="mx-auto max-w-7xl px-4 py-7 sm:px-6 sm:py-10">

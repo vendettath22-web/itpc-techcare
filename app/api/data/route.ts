@@ -6,7 +6,7 @@ type ApiBody = Record<string, unknown> & { action?: unknown };
 type CaseStudentRow = { case_id: string; student_id: string };
 type CaseCaretakerRow = { case_id: string; caretaker_id: string };
 type SessionClaims = { sub: string; exp: number };
-type SessionCaretaker = Pick<Caretaker, 'id' | 'name' | 'role' | 'phone' | 'age'>;
+type SessionCaretaker = Pick<Caretaker, 'id' | 'name' | 'role' | 'phone' | 'age' | 'profile_image_path'>;
 type PublicAdminContact = { id: string; name: string; phone: string | null; profile_image_path: string | null };
 
 const COOKIE_NAME = 'itpc_session';
@@ -185,6 +185,19 @@ function isAdmin(caretaker: SessionCaretaker): boolean {
   return caretaker.role === 'admin';
 }
 
+async function caretakerWithPhotoUrl(
+  supabase: SupabaseClient,
+  caretaker: SessionCaretaker,
+): Promise<SessionCaretaker & { profile_photo_url: string | null }> {
+  if (!caretaker.profile_image_path) return { ...caretaker, profile_photo_url: null };
+  const { data, error } = await supabase.storage
+    .from('caretaker-photos')
+    .createSignedUrl(caretaker.profile_image_path, 3600);
+  throwIfError(error);
+  if (!data?.signedUrl) throw new Error('สร้างลิงก์รูปโปรไฟล์ไม่สำเร็จ');
+  return { ...caretaker, profile_photo_url: data.signedUrl };
+}
+
 async function getActiveCaretaker(
   token: string,
   key: string,
@@ -193,7 +206,7 @@ async function getActiveCaretaker(
   const client = supabaseClient(key, token);
   const { data, error } = await client
     .from('caretakers')
-    .select('id, name, role, phone, age')
+    .select('id, name, role, phone, age, profile_image_path')
     .eq('id', id)
     .is('deactivated_at', null)
     .maybeSingle();
@@ -279,7 +292,7 @@ export async function POST(request: Request) {
     const { client: supabase, caretaker } = await getActiveCaretaker(token, key, claims.sub);
     if (!caretaker) return response('บัญชีถูกปิดใช้งานหรือไม่พบผู้ใช้', 401);
 
-    if (action === 'getSession') return response(caretaker);
+    if (action === 'getSession') return response(await caretakerWithPhotoUrl(supabase, caretaker));
 
     switch (action) {
       case 'listCaretakers': {
@@ -330,10 +343,11 @@ export async function POST(request: Request) {
             ...(photoPath ? { profile_image_path: photoPath } : {}),
           })
           .eq('id', caretaker.id)
-          .select('id, name, role, phone, age')
+          .select('id, name, role, phone, age, profile_image_path')
           .single();
         throwIfError(error);
-        return response(data);
+        if (!data) throw new Error('อัปเดตข้อมูลโปรไฟล์ไม่สำเร็จ');
+        return response(await caretakerWithPhotoUrl(supabase, data));
       }
       case 'createCaretaker': {
         if (!isAdmin(caretaker)) return response('ต้องใช้สิทธิ์ admin', 403);
