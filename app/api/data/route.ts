@@ -173,12 +173,12 @@ function verifySession(token: string, secret: string): SessionClaims | null {
 
 function sessionCookie(token: string): string {
   const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
-  return `${COOKIE_NAME}=${token}; Path=/takecare; HttpOnly; SameSite=Lax; Max-Age=${SESSION_SECONDS}${secure}`;
+  return `${COOKIE_NAME}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_SECONDS}${secure}`;
 }
 
 function clearedSessionCookie(): string {
   const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
-  return `${COOKIE_NAME}=; Path=/takecare; HttpOnly; SameSite=Lax; Max-Age=0${secure}`;
+  return `${COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secure}`;
 }
 
 function isAdmin(caretaker: SessionCaretaker): boolean {

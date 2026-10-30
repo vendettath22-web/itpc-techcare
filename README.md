@@ -53,6 +53,8 @@ npm run dev
 10. เพิ่ม `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` และ `SUPABASE_JWT_SECRET` ใน environment ของเครื่องพัฒนาและระบบ deploy แล้ว restart/redeploy
 11. ทดสอบล็อกอินทั้งบัญชี admin และผู้ดูแล จากนั้นตรวจว่า API ทำงานและแถว `deactivated_at` ไม่ถูกอ่านกลับ
 
+แอปนี้ให้บริการจาก root path ของโดเมน: API อยู่ที่ `/api/data` และโลโก้อยู่ที่ `/itpc-takecare-logo-v2.png` (ไฟล์ใน `public/` อ้างอิงจาก `/`) โดยไม่ได้กำหนด `basePath` เป็น `/takecare` จึงไม่ต้องตั้งค่า API base URL เพิ่มใน Vercel ให้ตั้ง Root Directory ของโปรเจกต์เป็นโฟลเดอร์นี้ และกำหนด environment variables ด้านบนใน Vercel ก่อน deploy
+
 Migration จะเพิ่ม Role, `deactivated_at` และ `academic_year`, แปลง PIN แบบ plaintext เดิมเป็น bcrypt hash, จำกัด PIN ใหม่ให้เป็นตัวเลข 4-12 หลัก, สร้าง RPC สำหรับ admin และเปิด RLS ทุกตารางที่เกี่ยวข้อง การเข้าสู่ระบบด้วย PIN ต้องได้บัญชีที่ตรงกันเพียงบัญชีเดียว จึงกำหนด PIN ซ้ำในบัญชีที่เปิดใช้งานไม่ได้
 
 ## สิทธิ์และการเก็บข้อมูล

@@ -1,7 +1,7 @@
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 
-const LOGO_PATH = '/takecare/itpc-takecare-logo-v2.png';
+const LOGO_PATH = '/itpc-takecare-logo-v2.png';
 
 function safeFilename(filename: string): string {
   return filename.replace(/[<>:"/\\|?*]/g, '_').replace(/\s+/g, '-');

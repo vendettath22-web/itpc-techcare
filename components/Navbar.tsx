@@ -158,7 +158,7 @@ export default function Navbar() {
           </button>
           <Link href="/" className="flex min-w-0 flex-1 items-center justify-center">
             <Image
-              src="/takecare/itpc-takecare-logo-v2.png"
+              src="/itpc-takecare-logo-v2.png"
               alt="ITPC Takecare ระบบช่วยเหลือดูแลนักเรียน"
               width={145}
               height={55}
@@ -186,7 +186,7 @@ export default function Navbar() {
         <div className="mb-5 flex items-center gap-2 rounded-2xl bg-white px-3 py-3">
           <Link href="/" className="flex min-w-0 flex-1 items-center justify-center">
           <Image
-            src="/takecare/itpc-takecare-logo-v2.png"
+            src="/itpc-takecare-logo-v2.png"
             alt="ITPC Takecare ระบบช่วยเหลือดูแลนักเรียน"
             width={174}
             height={66}

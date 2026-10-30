@@ -76,7 +76,7 @@ export default function LoginPage() {
         </div>
         <div className="mx-auto w-full max-w-[270px]">
           <Image
-            src="/takecare/itpc-takecare-logo-v2.png"
+            src="/itpc-takecare-logo-v2.png"
             alt="ITPC Takecare ระบบช่วยเหลือดูแลนักเรียน"
             width={824}
             height={311}
