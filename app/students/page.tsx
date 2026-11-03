@@ -3,7 +3,8 @@
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
-import { Pencil, Search, UserPlus, UsersRound } from 'lucide-react';
+import { FileSpreadsheet, Pencil, Search, Upload, UserPlus, UsersRound } from 'lucide-react';
+import * as XLSX from 'xlsx';
 import ImagePreview from '@/components/ImagePreview';
 import { useConfirmDialog } from '@/components/ConfirmDialog';
 import Navbar from '@/components/Navbar';
@@ -26,7 +27,30 @@ type StudentForm = {
   photoDataUrl: string;
 };
 
+type StudentImportRow = {
+  studentId: string;
+  firstNameTh: string;
+  lastNameTh: string;
+  nicknameTh: string;
+  grade: string;
+  room: string;
+  gender: string;
+};
+
 const DEFAULT_ACADEMIC_YEAR = '2569';
+const STUDENT_IMPORT_HEADERS = [
+  'student_id',
+  'first_name_th',
+  'last_name_th',
+  'nickname_th',
+  'grade',
+  'room',
+  'gender',
+] as const;
+
+function cellText(value: unknown): string {
+  return value === null || value === undefined ? '' : String(value).trim();
+}
 
 export default function StudentsPage() {
   const router = useRouter();
@@ -40,6 +64,11 @@ export default function StudentsPage() {
   const [grade, setGrade] = useState('');
   const [room, setRoom] = useState('');
   const [showStudentForm, setShowStudentForm] = useState(false);
+  const [showImportDialog, setShowImportDialog] = useState(false);
+  const [importRows, setImportRows] = useState<StudentImportRow[]>([]);
+  const [importFileName, setImportFileName] = useState('');
+  const [importAcademicYear, setImportAcademicYear] = useState(DEFAULT_ACADEMIC_YEAR);
+  const [importError, setImportError] = useState('');
   const [editingStudent, setEditingStudent] = useState<Student | null>(null);
   const [studentForm, setStudentForm] = useState<StudentForm>({
     studentId: '',
@@ -177,6 +206,78 @@ export default function StudentsPage() {
     }
   }
 
+  async function readStudentWorkbook(file: File) {
+    setImportError('');
+    setImportRows([]);
+    setImportFileName('');
+    try {
+      const workbook = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+      const sheetName = workbook.SheetNames[0];
+      const sheet = sheetName ? workbook.Sheets[sheetName] : undefined;
+      if (!sheet) throw new Error(t('ไม่พบแผ่นงานในไฟล์ Excel'));
+
+      const matrix = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: '', raw: false });
+      const headers = (matrix[0] ?? []).map(cellText);
+      const missingHeaders = STUDENT_IMPORT_HEADERS.filter((header) => !headers.includes(header));
+      if (missingHeaders.length) {
+        throw new Error(`${t('หัวตารางไม่ตรงรูปแบบที่รองรับ')}: ${missingHeaders.join(', ')}`);
+      }
+
+      const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '', raw: false });
+      if (!rows.length || rows.length > 2000) throw new Error(t('ไฟล์ต้องมีข้อมูลนักเรียน 1 ถึง 2,000 รายการ'));
+      const importedRows = rows.map((row, index): StudentImportRow => {
+        const student = {
+          studentId: cellText(row.student_id),
+          firstNameTh: cellText(row.first_name_th),
+          lastNameTh: cellText(row.last_name_th),
+          nicknameTh: cellText(row.nickname_th),
+          grade: cellText(row.grade),
+          room: cellText(row.room),
+          gender: cellText(row.gender),
+        };
+        if (!student.studentId || !student.firstNameTh || !student.lastNameTh || !student.grade ||
+            !/^\d+$/.test(student.room) || Number(student.room) < 1) {
+          throw new Error(`${t('ตรวจพบข้อมูลไม่ครบหรือห้องไม่ถูกต้องในแถว')} ${index + 2}`);
+        }
+        return student;
+      });
+
+      setImportRows(importedRows);
+      setImportFileName(file.name);
+      setImportAcademicYear(selectedYear || DEFAULT_ACADEMIC_YEAR);
+    } catch (readError) {
+      setImportError(readError instanceof Error ? readError.message : t('อ่านไฟล์ Excel ไม่สำเร็จ'));
+    }
+  }
+
+  async function importStudents() {
+    if (!importRows.length || !/^\d{4}$/.test(importAcademicYear)) return;
+    if (!await confirm({
+      title: `${t('นำเข้านักเรียน')} ${importRows.length} ${t('รายการ')}?`,
+      description: `${t('ปีการศึกษา')} ${importAcademicYear} · ${importFileName} · ${t('รหัสที่มีอยู่แล้วจะไม่ถูกเขียนทับ')}`,
+      confirmLabel: t('ยืนยันนำเข้า'),
+    })) return;
+
+    setSaving(true);
+    setImportError('');
+    try {
+      const result = await requestApi<{ inserted: number; skipped: number }>('importStudents', {
+        academicYear: importAcademicYear,
+        students: importRows,
+      });
+      setShowImportDialog(false);
+      setImportRows([]);
+      setImportFileName('');
+      setSelectedYear(importAcademicYear);
+      setNotice(`${t('นำเข้าข้อมูลแล้ว')} ${result.inserted} ${t('รายการ')} · ${t('ข้ามข้อมูลซ้ำ')} ${result.skipped} ${t('รายการ')}`);
+      await loadData(importAcademicYear);
+    } catch (importErrorResult) {
+      setImportError(importErrorResult instanceof Error ? importErrorResult.message : t('นำเข้าข้อมูลไม่สำเร็จ'));
+    } finally {
+      setSaving(false);
+    }
+  }
+
   if (!user) return <div className="grid min-h-screen place-items-center text-gray-500">{t('กำลังตรวจสอบการเข้าสู่ระบบ...')}</div>;
 
   return <main className="min-h-screen bg-[#faf9fb] transition-[padding] duration-300 ease-in-out lg:pl-[var(--sidebar-width,18rem)]">
@@ -185,7 +286,10 @@ export default function StudentsPage() {
     <section className="mx-auto max-w-7xl px-4 py-7 sm:px-6 sm:py-10">
       <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
         <div><p className="text-sm font-medium text-primary">{t('ข้อมูลนักเรียน')}</p><h1 className="mt-1 text-2xl font-bold text-gray-800 sm:text-3xl">{t('รายชื่อนักเรียน')}</h1><p className="mt-1 text-sm text-gray-500">{t('ปีการศึกษา')} {selectedYear} · {students.length} {t('นักเรียน')}</p></div>
-        {user.role === 'admin' && <button onClick={() => { setEditingStudent(null); setStudentForm({ studentId: '', firstNameTh: '', lastNameTh: '', nicknameTh: '', grade: '', room: '', gender: '', academicYear: selectedYear || DEFAULT_ACADEMIC_YEAR, photoDataUrl: '' }); setShowStudentForm(true); }} className="flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-hover"><UserPlus size={17} />{t('เพิ่มนักเรียน')}</button>}
+        {user.role === 'admin' && <div className="flex flex-wrap gap-2">
+          <button onClick={() => { setEditingStudent(null); setStudentForm({ studentId: '', firstNameTh: '', lastNameTh: '', nicknameTh: '', grade: '', room: '', gender: '', academicYear: selectedYear || DEFAULT_ACADEMIC_YEAR, photoDataUrl: '' }); setShowStudentForm(true); }} className="flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-hover"><UserPlus size={17} />{t('เพิ่มนักเรียน')}</button>
+          <button onClick={() => { setImportAcademicYear(selectedYear || DEFAULT_ACADEMIC_YEAR); setImportError(''); setShowImportDialog(true); }} className="flex items-center gap-2 rounded-xl border border-primary/30 bg-white px-4 py-2.5 text-sm font-semibold text-primary hover:bg-primary-light"><FileSpreadsheet size={17} />{t('นำเข้า Excel')}</button>
+        </div>}
       </div>
       {error && <p role="alert" className="mb-4 rounded-xl bg-red-50 p-3 text-sm text-red-700">{error} <button onClick={() => { setLoading(true); void loadData(selectedYear); }} className="underline">{t('ลองอีกครั้ง')}</button></p>}
       {notice && <p role="status" className="mb-4 rounded-xl bg-green-50 p-3 text-sm text-green-700">{notice}</p>}
@@ -256,6 +360,30 @@ export default function StudentsPage() {
           <button disabled={saving} className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white disabled:opacity-60">{saving ? t('กำลังบันทึก...') : t(editingStudent ? 'บันทึกการแก้ไข' : 'บันทึกนักเรียน')}</button>
         </div>
       </form>
+    </div>}
+    {showImportDialog && <div className="fixed inset-0 z-50 grid place-items-center overflow-y-auto bg-black/40 p-4">
+      <section role="dialog" aria-modal="true" aria-labelledby="student-import-title" className="my-auto w-full max-w-xl rounded-3xl bg-white p-5 shadow-2xl sm:p-7">
+        <h2 id="student-import-title" className="text-xl font-bold text-gray-800">{t('นำเข้านักเรียนจาก Excel')}</h2>
+        <p className="mt-1 text-sm text-gray-500">{t('รองรับคอลัมน์')} student_id, first_name_th, last_name_th, nickname_th, grade, room, gender</p>
+        <label className="mt-5 block text-sm text-gray-600">{t('ปีการศึกษา')}
+          <input required inputMode="numeric" pattern="[0-9]{4}" maxLength={4} value={importAcademicYear} onChange={(event) => setImportAcademicYear(event.target.value)} className="mt-1 w-full rounded-xl border border-gray-200 px-3 py-2.5" />
+        </label>
+        <label className="mt-3 flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed border-primary/40 px-4 py-5 text-sm font-medium text-primary hover:bg-primary-light">
+          <Upload size={17} />{t(importFileName || 'เลือกไฟล์ Excel')}
+          <input type="file" accept=".xlsx,.xls" onChange={(event) => {
+            const file = event.target.files?.[0];
+            if (file) void readStudentWorkbook(file);
+            event.currentTarget.value = '';
+          }} className="sr-only" />
+        </label>
+        {importRows.length > 0 && <p className="mt-3 rounded-xl bg-primary-light p-3 text-sm text-primary">{t('ตรวจสอบแล้ว')} {importRows.length} {t('รายการ')} · {t('รายการซ้ำในไฟล์')} {importRows.length - new Set(importRows.map((row) => row.studentId)).size} {t('รายการ')}</p>}
+        {importError && <p role="alert" className="mt-3 rounded-xl bg-red-50 p-3 text-sm text-red-700">{importError}</p>}
+        <p className="mt-3 text-xs text-gray-500">{t('หากมีรหัสนักเรียนในปีการศึกษานี้อยู่แล้ว ระบบจะข้ามรายการนั้นและไม่เขียนทับข้อมูล')}</p>
+        <div className="mt-5 flex justify-end gap-2">
+          <button type="button" disabled={saving} onClick={() => setShowImportDialog(false)} className="rounded-lg px-4 py-2 text-sm text-gray-600 disabled:opacity-60">{t('ยกเลิก')}</button>
+          <button type="button" disabled={saving || !importRows.length || !/^\d{4}$/.test(importAcademicYear)} onClick={() => void importStudents()} className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white disabled:opacity-60">{saving ? t('กำลังนำเข้า...') : <><Upload size={15} />{t('ยืนยันนำเข้า')}</>}</button>
+        </div>
+      </section>
     </div>}
   </main>;
 }

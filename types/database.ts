@@ -61,3 +61,13 @@ export interface CaseSignature {
   signature_data: string;
   signed_at: string;
 }
+
+export interface AppUsageLog {
+  id: string;
+  caretaker_id: string | null;
+  caretaker_name: string;
+  caretaker_role: 'admin' | 'caretaker';
+  action: string;
+  details: string | null;
+  used_at: string;
+}

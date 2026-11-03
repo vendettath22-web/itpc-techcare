@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
-import { UserPlus, UsersRound } from 'lucide-react';
+import { ClipboardList, RefreshCw, UserPlus, UsersRound } from 'lucide-react';
 import { useConfirmDialog } from '@/components/ConfirmDialog';
 import ImagePreview from '@/components/ImagePreview';
 import Navbar from '@/components/Navbar';
@@ -10,7 +10,7 @@ import { requestApi } from '@/lib/api';
 import { prepareProfilePhoto } from '@/lib/profile-image';
 import { useLanguage } from '@/lib/language';
 import { useSessionCaretaker } from '@/lib/session';
-import type { Caretaker } from '@/types/database';
+import type { AppUsageLog, Caretaker } from '@/types/database';
 
 type CaretakerForm = {
   name: string;
@@ -23,16 +23,36 @@ type CaretakerForm = {
 
 const emptyForm: CaretakerForm = { name: '', role: 'caretaker', pin: '', phone: '', age: '', photoDataUrl: '' };
 
+const usageActionLabels: Record<string, string> = {
+  login: 'เข้าสู่ระบบ',
+  logout: 'ออกจากระบบ',
+  update_profile: 'แก้ไขโปรไฟล์',
+  create_caretaker: 'เพิ่มบัญชีผู้ดูแล',
+  update_caretaker: 'แก้ไขบัญชีผู้ดูแล',
+  deactivate_caretaker: 'ปิดบัญชีผู้ดูแล',
+  create_student: 'เพิ่มข้อมูลนักเรียน',
+  import_students: 'นำเข้ารายชื่อนักเรียน',
+  update_student: 'แก้ไขข้อมูลนักเรียน',
+  deactivate_student: 'ปิดข้อมูลนักเรียน',
+  create_case: 'สร้างเคส',
+  add_case_update: 'บันทึกติดตามเคส',
+  update_case_status: 'เปลี่ยนสถานะเคส',
+  save_signature: 'บันทึกลายเซ็น',
+};
+
 export default function AdminPage() {
   const router = useRouter();
   const user = useSessionCaretaker();
-  const { t } = useLanguage();
+  const { language, t } = useLanguage();
   const [caretakers, setCaretakers] = useState<Caretaker[]>([]);
+  const [usageLogs, setUsageLogs] = useState<AppUsageLog[]>([]);
   const [drafts, setDrafts] = useState<Record<string, CaretakerForm>>({});
   const [newCaretaker, setNewCaretaker] = useState<CaretakerForm>(emptyForm);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [usageLogError, setUsageLogError] = useState('');
+  const [usageLogsLoading, setUsageLogsLoading] = useState(true);
   const [notice, setNotice] = useState('');
   const { confirm, dialog } = useConfirmDialog();
 
@@ -56,14 +76,30 @@ export default function AdminPage() {
     }
   }, [t]);
 
+  const loadUsageLogs = useCallback(async () => {
+    setUsageLogsLoading(true);
+    setUsageLogError('');
+    try {
+      const data = await requestApi<AppUsageLog[]>('adminListUsageLogs');
+      setUsageLogs(data);
+    } catch (loadError) {
+      setUsageLogError(loadError instanceof Error ? loadError.message : t('โหลดบันทึกการใช้งานไม่สำเร็จ'));
+    } finally {
+      setUsageLogsLoading(false);
+    }
+  }, [t]);
+
   useEffect(() => {
     if (user === undefined) return;
     if (!user || user.role !== 'admin') {
       router.replace(user ? '/' : '/login');
       return;
     }
-    void Promise.resolve().then(loadCaretakers);
-  }, [loadCaretakers, router, user]);
+    void Promise.resolve().then(() => {
+      void loadCaretakers();
+      void loadUsageLogs();
+    });
+  }, [loadCaretakers, loadUsageLogs, router, user]);
 
   async function createCaretaker(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -249,6 +285,60 @@ export default function AdminPage() {
             {!caretakers.length && <p className="rounded-2xl border border-dashed border-gray-300 bg-white py-12 text-center text-gray-500">ยังไม่มีบัญชีผู้ดูแล</p>}
           </div>
         )}
+
+        <section className="mt-10">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <ClipboardList size={18} className="text-primary" />
+              <h2 className="font-bold text-gray-800">{t('บันทึกการใช้งาน')}</h2>
+            </div>
+            <button
+              type="button"
+              onClick={() => void loadUsageLogs()}
+              disabled={usageLogsLoading}
+              className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-60"
+            >
+              <RefreshCw size={15} className={usageLogsLoading ? 'animate-spin' : ''} />
+              {t('รีเฟรช')}
+            </button>
+          </div>
+          <p className="mb-3 text-sm text-gray-500">{t('แสดงกิจกรรมล่าสุดไม่เกิน 500 รายการ โดยไม่เก็บ PIN เนื้อหาบันทึก หรือลายเซ็น')}</p>
+          {usageLogError && <p role="alert" className="mb-3 rounded-xl bg-red-50 p-3 text-sm text-red-700">{usageLogError}</p>}
+          <div className="overflow-x-auto rounded-2xl border border-[#eee9ef] bg-white shadow-sm">
+            <table className="w-full min-w-[760px] text-left text-sm">
+              <thead className="bg-[#f7f3f9] text-gray-600">
+                <tr>
+                  <th scope="col" className="px-4 py-3 font-semibold">{t('วัน-เวลา')}</th>
+                  <th scope="col" className="px-4 py-3 font-semibold">{t('ชื่อผู้ใช้')}</th>
+                  <th scope="col" className="px-4 py-3 font-semibold">{t('บทบาท')}</th>
+                  <th scope="col" className="px-4 py-3 font-semibold">{t('เหตุการณ์')}</th>
+                  <th scope="col" className="px-4 py-3 font-semibold">{t('รายละเอียด')}</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {usageLogsLoading ? (
+                  <tr><td colSpan={5} className="px-4 py-8 text-center text-gray-500">{t('กำลังโหลดบันทึกการใช้งาน...')}</td></tr>
+                ) : usageLogs.length ? usageLogs.map((log) => (
+                  <tr key={log.id} className="text-gray-700">
+                    <td className="whitespace-nowrap px-4 py-3">
+                      {new Intl.DateTimeFormat(language === 'th' ? 'th-TH' : 'en-US', {
+                        dateStyle: 'medium',
+                        timeStyle: 'short',
+                        timeZone: 'Asia/Bangkok',
+                      }).format(new Date(log.used_at))}
+                    </td>
+                    <td className="px-4 py-3 font-medium">{log.caretaker_name}</td>
+                    <td className="px-4 py-3">{log.caretaker_role === 'admin' ? t('Admin') : t('ผู้ดูแล')}</td>
+                    <td className="px-4 py-3">{t(usageActionLabels[log.action] ?? log.action)}</td>
+                    <td className="max-w-sm px-4 py-3 text-gray-500">{log.details || '-'}</td>
+                  </tr>
+                )) : (
+                  <tr><td colSpan={5} className="px-4 py-8 text-center text-gray-500">{t('ยังไม่มีบันทึกการใช้งาน')}</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
       </section>
     </main>
   );

@@ -3,6 +3,15 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type { Case, Caretaker, Student } from '@/types/database';
 
 type ApiBody = Record<string, unknown> & { action?: unknown };
+type ImportedStudent = {
+  student_id: string;
+  first_name_th: string;
+  last_name_th: string;
+  nickname_th: string | null;
+  grade: string;
+  room: number;
+  gender: string | null;
+};
 type CaseStudentRow = { case_id: string; student_id: string };
 type CaseCaretakerRow = { case_id: string; caretaker_id: string };
 type SessionClaims = { sub: string; exp: number };
@@ -40,6 +49,45 @@ function stringArray(body: ApiBody, key: string): string[] {
     throw new Error(`Invalid or missing ${key}`);
   }
   return value;
+}
+
+function importedStudents(value: unknown): ImportedStudent[] {
+  if (!Array.isArray(value) || value.length < 1 || value.length > 2000) {
+    throw new Error('ต้องมีข้อมูลนักเรียน 1 ถึง 2,000 รายการ');
+  }
+  return value.map((item, index) => {
+    if (typeof item !== 'object' || item === null || Array.isArray(item)) {
+      throw new Error(`ข้อมูลนักเรียนแถว ${index + 2} ไม่ถูกต้อง`);
+    }
+    const row = item as Record<string, unknown>;
+    const studentId = typeof row.studentId === 'string' ? row.studentId.trim() : '';
+    const firstName = typeof row.firstNameTh === 'string' ? row.firstNameTh.trim() : '';
+    const lastName = typeof row.lastNameTh === 'string' ? row.lastNameTh.trim() : '';
+    const nickname = typeof row.nicknameTh === 'string' ? row.nicknameTh.trim() : '';
+    const grade = typeof row.grade === 'string' ? row.grade.trim() : '';
+    const roomValue = typeof row.room === 'string' ? row.room.trim() : '';
+    const gender = typeof row.gender === 'string' ? row.gender.trim() : '';
+    if (
+      !studentId || studentId.length > 100 ||
+      !firstName || firstName.length > 200 ||
+      !lastName || lastName.length > 200 ||
+      nickname.length > 200 ||
+      !grade || grade.length > 100 ||
+      !/^\d+$/.test(roomValue) || Number(roomValue) < 1 || Number(roomValue) > 999 ||
+      gender.length > 30
+    ) {
+      throw new Error(`ข้อมูลนักเรียนแถว ${index + 2} ไม่ครบหรือไม่ถูกต้อง`);
+    }
+    return {
+      student_id: studentId,
+      first_name_th: firstName,
+      last_name_th: lastName,
+      nickname_th: nickname || null,
+      grade,
+      room: Number(roomValue),
+      gender: gender || null,
+    };
+  });
 }
 
 function optionalInteger(body: ApiBody, key: string): number | null {
@@ -97,6 +145,32 @@ async function uploadProfilePhoto(
 
 function throwIfError(error: { message: string } | null): void {
   if (error) throw new Error(error.message);
+}
+
+async function recordUsageLog(
+  supabase: SupabaseClient,
+  caretaker: SessionCaretaker,
+  action: string,
+  details: string | null = null,
+): Promise<void> {
+  const { error } = await supabase.from('app_usage_logs').insert({
+    caretaker_id: caretaker.id,
+    caretaker_name: caretaker.name,
+    caretaker_role: caretaker.role,
+    action,
+    details: details?.slice(0, 500) ?? null,
+  });
+  const errorMessage = error?.message.toLowerCase() ?? '';
+  if (errorMessage.includes('details')) {
+    throw new Error('ระบบบันทึกกิจกรรมยังไม่พร้อม กรุณารัน migration 20261103000002_app_usage_log_details.sql บน Supabase');
+  }
+  if (errorMessage.includes('column')) {
+    throw new Error('ระบบบันทึกกิจกรรมยังไม่พร้อม กรุณารัน migration 20261103000001_app_usage_log_details.sql และ 20261103000002_app_usage_log_details.sql บน Supabase');
+  }
+  if (errorMessage.includes('could not find the table') || errorMessage.includes('does not exist')) {
+    throw new Error('ระบบบันทึกการใช้งานยังไม่พร้อม กรุณารัน migration 20261103000000_app_usage_logs.sql และ migration ที่เหลือในโฟลเดอร์ supabase/migrations บน Supabase');
+  }
+  throwIfError(error);
 }
 
 function environment() {
@@ -274,14 +348,24 @@ export async function POST(request: Request) {
       if (!caretaker.id || !caretaker.name || !['admin', 'caretaker'].includes(caretaker.role)) {
         return response('ข้อมูลบัญชีไม่ถูกต้อง', 500);
       }
+      const token = signSession(caretaker, jwtSecret);
+      await recordUsageLog(supabaseClient(key, token), caretaker, 'login');
       return response(
         caretaker,
         200,
-        { 'Set-Cookie': sessionCookie(signSession(caretaker, jwtSecret)) },
+        { 'Set-Cookie': sessionCookie(token) },
       );
     }
 
     if (action === 'logout') {
+      const token = readCookie(request, COOKIE_NAME);
+      const claims = token ? verifySession(token, jwtSecret) : null;
+      if (token && claims) {
+        const { caretaker } = await getActiveCaretaker(token, key, claims.sub);
+        if (caretaker) {
+          await recordUsageLog(supabaseClient(key, token), caretaker, 'logout');
+        }
+      }
       return response(null, 200, { 'Set-Cookie': clearedSessionCookie() });
     }
 
@@ -329,6 +413,16 @@ export async function POST(request: Request) {
         }));
         return response(caretakerList);
       }
+      case 'adminListUsageLogs': {
+        if (!isAdmin(caretaker)) return response('ต้องใช้สิทธิ์ admin', 403);
+        const { data, error } = await supabase
+          .from('app_usage_logs')
+          .select('id, caretaker_id, caretaker_name, caretaker_role, action, details, used_at')
+          .order('used_at', { ascending: false })
+          .limit(500);
+        throwIfError(error);
+        return response(data ?? []);
+      }
       case 'updateCaretakerProfile': {
         const name = requiredString(body, 'name');
         const phone = optionalPhone(body);
@@ -347,6 +441,7 @@ export async function POST(request: Request) {
           .single();
         throwIfError(error);
         if (!data) throw new Error('อัปเดตข้อมูลโปรไฟล์ไม่สำเร็จ');
+        await recordUsageLog(supabase, caretaker, 'update_profile', 'ข้อมูลโปรไฟล์');
         return response(await caretakerWithPhotoUrl(supabase, data));
       }
       case 'createCaretaker': {
@@ -371,6 +466,7 @@ export async function POST(request: Request) {
           if (removeError) throw new Error(`${error.message}; ลบรูปที่อัปโหลดไม่สำเร็จ: ${removeError.message}`);
         }
         throwIfError(error);
+        await recordUsageLog(supabase, caretaker, 'create_caretaker', `${name} (${body.role === 'admin' ? 'admin' : 'caretaker'})`);
         return response(data);
       }
       case 'updateCaretaker': {
@@ -378,7 +474,7 @@ export async function POST(request: Request) {
         const id = requiredString(body, 'id');
         const { data: current, error: currentError } = await supabase
           .from('caretakers')
-          .select('profile_image_path')
+          .select('name, profile_image_path')
           .eq('id', id)
           .maybeSingle();
         throwIfError(currentError);
@@ -397,14 +493,23 @@ export async function POST(request: Request) {
           p_profile_image_path: uploadedPath ?? current.profile_image_path,
         });
         throwIfError(error);
+        await recordUsageLog(supabase, caretaker, 'update_caretaker', `${current.name} -> ${name}`);
         return response(data);
       }
       case 'deactivateCaretaker': {
         if (!isAdmin(caretaker)) return response('ต้องใช้สิทธิ์ admin', 403);
+        const id = requiredString(body, 'id');
+        const { data: target, error: targetError } = await supabase
+          .from('caretakers')
+          .select('name')
+          .eq('id', id)
+          .maybeSingle();
+        throwIfError(targetError);
         const { error } = await supabase.rpc('admin_deactivate_caretaker', {
-          p_id: requiredString(body, 'id'),
+          p_id: id,
         });
         throwIfError(error);
+        await recordUsageLog(supabase, caretaker, 'deactivate_caretaker', target?.name ?? id);
         return response(null);
       }
       case 'listAcademicYears': {
@@ -473,7 +578,27 @@ export async function POST(request: Request) {
           if (removeError) throw new Error(`${error.message}; ลบรูปนักเรียนที่อัปโหลดไม่สำเร็จ: ${removeError.message}`);
         }
         throwIfError(error);
+        const studentName = [firstName, lastName].filter(Boolean).join(' ') || studentId || id;
+        await recordUsageLog(supabase, caretaker, 'create_student', `${studentName} (${academicYear})`);
         return response(data);
+      }
+      case 'importStudents': {
+        if (!isAdmin(caretaker)) return response('ต้องใช้สิทธิ์ admin', 403);
+        const academicYear = requiredString(body, 'academicYear');
+        if (!/^\d{4}$/.test(academicYear)) return response('Invalid academic year', 400);
+        const students = importedStudents(body.students);
+        const { data, error } = await supabase.rpc('admin_import_students', {
+          p_academic_year: academicYear,
+          p_students: students,
+        });
+        if (error?.message.toLowerCase().includes('admin_import_students')) {
+          throw new Error('ระบบนำเข้าข้อมูลยังไม่พร้อม กรุณารัน migration 20261103000004_bulk_import_students.sql บน Supabase');
+        }
+        throwIfError(error);
+        if (typeof data !== 'number') throw new Error('ผลการนำเข้าข้อมูลไม่ถูกต้อง');
+        const skipped = students.length - data;
+        await recordUsageLog(supabase, caretaker, 'import_students', `${data} imported, ${skipped} skipped (${academicYear})`);
+        return response({ inserted: data, skipped });
       }
       case 'updateStudent': {
         if (!isAdmin(caretaker)) return response('ต้องใช้สิทธิ์ admin', 403);
@@ -482,9 +607,10 @@ export async function POST(request: Request) {
         if (room !== null && (!Number.isInteger(room) || room < 1)) {
           return response('Invalid room', 400);
         }
+        const academicYear = requiredString(body, 'academicYear');
         const { data: current, error: currentError } = await supabase
           .from('students')
-          .select('profile_image_path')
+          .select('first_name_th, last_name_th, academic_year, profile_image_path')
           .eq('id', id)
           .is('deactivated_at', null)
           .maybeSingle();
@@ -500,21 +626,40 @@ export async function POST(request: Request) {
           p_grade: optionalString(body, 'grade'),
           p_room: room,
           p_gender: optionalString(body, 'gender'),
-          p_academic_year: requiredString(body, 'academicYear'),
+          p_academic_year: academicYear,
           p_profile_image_path: uploadedPath ?? current.profile_image_path,
         });
         if (error?.message.toLowerCase().includes('admin_update_student')) {
           throw new Error('ระบบแก้ไขข้อมูลนักเรียนยังไม่พร้อม กรุณารัน migration 20261027000006_admin_update_student.sql แล้วลองใหม่');
         }
         throwIfError(error);
+        const studentName = [
+          optionalString(body, 'firstNameTh') ?? current.first_name_th,
+          optionalString(body, 'lastNameTh') ?? current.last_name_th,
+        ].filter(Boolean).join(' ') || id;
+        await recordUsageLog(supabase, caretaker, 'update_student', `${studentName} (${academicYear})`);
         return response(null);
       }
       case 'deactivateStudent': {
         if (!isAdmin(caretaker)) return response('ต้องใช้สิทธิ์ admin', 403);
+        const id = requiredString(body, 'id');
+        const { data: target, error: targetError } = await supabase
+          .from('students')
+          .select('first_name_th, last_name_th, academic_year')
+          .eq('id', id)
+          .maybeSingle();
+        throwIfError(targetError);
         const { error } = await supabase.rpc('admin_deactivate_student', {
-          p_id: requiredString(body, 'id'),
+          p_id: id,
         });
         throwIfError(error);
+        const studentName = [target?.first_name_th, target?.last_name_th].filter(Boolean).join(' ') || id;
+        await recordUsageLog(
+          supabase,
+          caretaker,
+          'deactivate_student',
+          `${studentName}${target?.academic_year ? ` (${target.academic_year})` : ''}`,
+        );
         return response(null);
       }
       case 'getStudent': {
@@ -612,26 +757,40 @@ export async function POST(request: Request) {
           p_caretaker_ids: stringArray(body, 'caretakerIds'),
         });
         throwIfError(error);
+        const caseTypeLabel = caseType === 'low_confidence'
+          ? 'ความมั่นใจต่ำ'
+          : caseType === 'feel_not_smart' ? 'รู้สึกไม่เก่ง' : 'เคสอื่น';
+        await recordUsageLog(
+          supabase,
+          caretaker,
+          'create_case',
+          `${caseTypeLabel} · นัด ${requiredString(body, 'scheduledAt')} · case ${data}`,
+        );
         return response(data);
       }
       case 'insertCaseUpdate': {
+        const caseId = requiredString(body, 'caseId');
         const { error } = await supabase.from('case_updates').insert({
-          case_id: requiredString(body, 'caseId'),
+          case_id: caseId,
           caretaker_id: caretaker.id,
           activity_note: requiredString(body, 'activityNote'),
           result_note: optionalString(body, 'resultNote'),
           next_step: optionalString(body, 'nextStep'),
         });
         throwIfError(error);
+        await recordUsageLog(supabase, caretaker, 'add_case_update', `case ${caseId}`);
         return response(null);
       }
       case 'updateCaseStatus': {
         const status = body.status === 'done' ? 'done' : 'planned';
-        const { error } = await supabase.from('cases').update({
+        const caseId = requiredString(body, 'caseId');
+        const { data, error } = await supabase.from('cases').update({
           status,
           updated_at: new Date().toISOString(),
-        }).eq('id', requiredString(body, 'caseId'));
+        }).eq('id', caseId).select('id').maybeSingle();
         throwIfError(error);
+        if (!data) return response('ไม่พบเคสหรือไม่มีสิทธิ์เปลี่ยนสถานะ', 404);
+        await recordUsageLog(supabase, caretaker, 'update_case_status', `case ${caseId}: ${status}`);
         return response(null);
       }
       case 'listCaseUpdates': {
@@ -651,6 +810,7 @@ export async function POST(request: Request) {
           signature_data: requiredString(body, 'signatureData'),
         }).select('*').single();
         throwIfError(error);
+        await recordUsageLog(supabase, caretaker, 'save_signature', `case ${data.case_id}`);
         return response(data);
       }
       default:

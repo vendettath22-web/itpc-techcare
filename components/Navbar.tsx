@@ -211,33 +211,33 @@ export default function Navbar() {
             <X size={18} />
           </button>
         </div>
+        <div className="mb-5 rounded-2xl border border-white/10 bg-white/[0.07] px-4 py-3.5">
+          <div className="flex items-center gap-3">
+            {caretaker?.profile_photo_url ? (
+              <Image
+                src={caretaker.profile_photo_url}
+                alt={`${t('รูปโปรไฟล์')} ${caretaker.name}`}
+                width={44}
+                height={44}
+                unoptimized
+                className="h-11 w-11 shrink-0 rounded-xl object-cover"
+              />
+            ) : (
+              <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-[#76598a] text-sm font-bold text-white">
+                {caretaker?.name?.trim().charAt(0) || 'U'}
+              </span>
+            )}
+            <div className="min-w-0">
+              <p className="truncate text-sm font-semibold text-white">{caretaker?.name ?? ''}</p>
+              <p className="mt-0.5 text-xs text-[#c8bad4]">{caretaker?.role === 'admin' ? 'Admin' : t('ผู้ดูแล')}</p>
+            </div>
+          </div>
+        </div>
         <div className="mb-2 px-3 text-[11px] font-bold uppercase tracking-[0.16em] text-[#ad9cba]">{t('เมนูหลัก')}</div>
         <nav aria-label={t('เมนูหลัก')} className="flex flex-col gap-1">
           {renderNavItems()}
         </nav>
         <div className="mt-8">
-          <div className="mb-3 rounded-2xl border border-white/10 bg-white/[0.07] px-4 py-3.5">
-            <div className="flex items-center gap-3">
-              {caretaker?.profile_photo_url ? (
-                <Image
-                  src={caretaker.profile_photo_url}
-                  alt={`${t('รูปโปรไฟล์')} ${caretaker.name}`}
-                  width={44}
-                  height={44}
-                  unoptimized
-                  className="h-11 w-11 shrink-0 rounded-xl object-cover"
-                />
-              ) : (
-                <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-[#76598a] text-sm font-bold text-white">
-                  {caretaker?.name?.trim().charAt(0) || 'U'}
-                </span>
-              )}
-              <div className="min-w-0">
-                <p className="truncate text-sm font-semibold text-white">{caretaker?.name ?? ''}</p>
-                <p className="mt-0.5 text-xs text-[#c8bad4]">{caretaker?.role === 'admin' ? 'Admin' : t('ผู้ดูแล')}</p>
-              </div>
-            </div>
-          </div>
           {profilePhotoError && <p role="alert" className="mb-2 px-2 text-xs text-red-300">{profilePhotoError}</p>}
           <div className="grid grid-cols-1 gap-1">
             <button type="button" aria-label="Change language" onClick={() => setLanguage(language === 'th' ? 'en' : 'th')} className={actionButtonClass}>
