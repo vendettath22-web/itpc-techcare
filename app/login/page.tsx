@@ -8,10 +8,10 @@ import AdminContactDialog from '@/components/AdminContactDialog';
 import { requestApi } from '@/lib/api';
 import { notifySessionChange, SESSION_KEY } from '@/lib/session';
 import { useLanguage } from '@/lib/language';
-import type { Caretaker } from '@/types/database';
+import type { itpc_takecare_caretakers } from '@/types/database';
 
 export default function LoginPage() {
-  const [caretakers, setCaretakers] = useState<Pick<Caretaker, 'id' | 'name'>[]>([]);
+  const [caretakers, setCaretakers] = useState<Pick<itpc_takecare_caretakers, 'id' | 'name'>[]>([]);
   const [selectedCaretakerId, setSelectedCaretakerId] = useState('');
   const [loadingCaretakers, setLoadingCaretakers] = useState(true);
   const [caretakerListAttempt, setCaretakerListAttempt] = useState(0);
@@ -27,7 +27,7 @@ export default function LoginPage() {
     let active = true;
     async function loadCaretakers() {
       try {
-        const data = await requestApi<Pick<Caretaker, 'id' | 'name'>[]>('listLoginCaretakers');
+        const data = await requestApi<Pick<itpc_takecare_caretakers, 'id' | 'name'>[]>('listLoginCaretakers');
         if (!active) return;
         setCaretakers(data);
         setError('');
@@ -52,7 +52,7 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      const caretaker = await requestApi<Pick<Caretaker, 'id' | 'name' | 'role'>>(
+      const caretaker = await requestApi<Pick<itpc_takecare_caretakers, 'id' | 'name' | 'role'>>(
         'verifyCaretakerPin',
         { caretakerId: selectedCaretakerId, pin },
       );

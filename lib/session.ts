@@ -1,4 +1,4 @@
-import type { Caretaker } from '@/types/database';
+import type { itpc_takecare_caretakers } from '@/types/database';
 import { useMemo, useSyncExternalStore } from 'react';
 
 export const SESSION_KEY = 'itpc_user';
@@ -13,7 +13,7 @@ function subscribeToSession(onChange: () => void): () => void {
   };
 }
 
-function parseCaretaker(stored: string | null): Caretaker | null {
+function parseCaretaker(stored: string | null): itpc_takecare_caretakers | null {
   if (!stored) return null;
   try {
     const value: unknown = JSON.parse(stored);
@@ -27,7 +27,7 @@ function parseCaretaker(stored: string | null): Caretaker | null {
       'role' in value &&
       (value.role === 'admin' || value.role === 'caretaker')
     ) {
-      return value as Caretaker;
+      return value as itpc_takecare_caretakers;
     }
     return null;
   } catch {
@@ -35,7 +35,7 @@ function parseCaretaker(stored: string | null): Caretaker | null {
   }
 }
 
-export function useSessionCaretaker(): Caretaker | null | undefined {
+export function useSessionCaretaker(): itpc_takecare_caretakers | null | undefined {
   const stored = useSyncExternalStore(
     subscribeToSession,
     (): string | null | undefined => window.localStorage.getItem(SESSION_KEY),
@@ -59,7 +59,7 @@ export function useCurrentDateKey(): string {
   );
 }
 
-export function getStoredCaretaker(): Caretaker | null {
+export function getStoredCaretaker(): itpc_takecare_caretakers | null {
   if (typeof window === 'undefined') return null;
   return parseCaretaker(window.localStorage.getItem(SESSION_KEY));
 }

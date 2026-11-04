@@ -7,25 +7,26 @@ import { useLanguage } from '@/lib/language';
 import { requestApi } from '@/lib/api';
 import { studentName } from '@/lib/cases';
 import { useSessionCaretaker } from '@/lib/session';
-import type { Caretaker, Student } from '@/types/database';
+import type { itpc_takecare_caretakers, itpc_takecare_cases, itpc_takecare_students } from '@/types/database';
 
-type Props = { onClose: () => void; onCreated: () => void };
+type Props = { onClose: () => void; onSaved: () => void; caseToEdit?: itpc_takecare_cases };
 
-export default function CaseFormModal({ onClose, onCreated }: Props) {
-  const [students, setStudents] = useState<Student[]>([]);
-  const [caretakers, setCaretakers] = useState<Caretaker[]>([]);
-  const [selectedStudents, setSelectedStudents] = useState<Student[]>([]);
-  const [caretakerChoices, setCaretakerChoices] = useState<string[]>([]);
+export default function CaseFormModal({ onClose, onSaved, caseToEdit }: Props) {
+  const [students, setStudents] = useState<itpc_takecare_students[]>([]);
+  const [caretakers, setCaretakers] = useState<itpc_takecare_caretakers[]>([]);
+  const [selectedStudents, setSelectedStudents] = useState<itpc_takecare_students[]>(caseToEdit?.students ?? []);
+  const [caretakerChoices, setCaretakerChoices] = useState<string[]>(caseToEdit?.caretakers?.map((caretaker) => caretaker.id) ?? []);
   const [academicYears, setAcademicYears] = useState<string[]>([]);
-  const [academicYear, setAcademicYear] = useState('2569');
+  const [academicYear, setAcademicYear] = useState(caseToEdit?.students?.[0]?.academic_year ?? '2569');
   const [search, setSearch] = useState('');
   const [gradeFilter, setGradeFilter] = useState('');
   const [roomFilter, setRoomFilter] = useState('');
-  const [caseType, setCaseType] = useState<'low_confidence' | 'feel_not_smart' | 'other'>('low_confidence');
-  const [otherText, setOtherText] = useState('');
-  const [details, setDetails] = useState('');
+  const [caseType, setCaseType] = useState<'low_confidence' | 'feel_not_smart' | 'other'>(caseToEdit?.case_type ?? 'low_confidence');
+  const [otherText, setOtherText] = useState(caseToEdit?.other_text ?? '');
+  const [details, setDetails] = useState(caseToEdit?.details ?? '');
   const [scheduledAt, setScheduledAt] = useState(() => {
-    const date = new Date(Date.now() - new Date().getTimezoneOffset() * 60000);
+    const date = new Date(caseToEdit?.scheduled_at ?? Date.now());
+    date.setTime(date.getTime() - date.getTimezoneOffset() * 60000);
     return date.toISOString().slice(0, 16);
   });
   const [loading, setLoading] = useState(true);
@@ -46,11 +47,11 @@ export default function CaseFormModal({ onClose, onCreated }: Props) {
       try {
         const [yearData, caretakerData] = await Promise.all([
           requestApi<string[]>('listAcademicYears'),
-          requestApi<Caretaker[]>('listCaretakers'),
+          requestApi<itpc_takecare_caretakers[]>('listCaretakers'),
         ]);
         if (!active) return;
-        const selectedYear = yearData[0] ?? '2569';
-        const studentData = await requestApi<Student[]>('listStudents', { academicYear: selectedYear });
+        const selectedYear = caseToEdit?.students?.[0]?.academic_year ?? yearData[0] ?? '2569';
+        const studentData = await requestApi<itpc_takecare_students[]>('listStudents', { academicYear: selectedYear });
         if (!active) return;
         setAcademicYears(yearData);
         setAcademicYear(selectedYear);
@@ -65,7 +66,7 @@ export default function CaseFormModal({ onClose, onCreated }: Props) {
     }
     void loadOptions();
     return () => { active = false; };
-  }, []);
+  }, [caseToEdit]);
 
   async function changeAcademicYear(value: string) {
     setAcademicYear(value);
@@ -75,7 +76,7 @@ export default function CaseFormModal({ onClose, onCreated }: Props) {
     setLoading(true);
     setError('');
     try {
-      setStudents(await requestApi<Student[]>('listStudents', { academicYear: value }));
+      setStudents(await requestApi<itpc_takecare_students[]>('listStudents', { academicYear: value }));
     } catch (loadError) {
       setError(`โหลดรายชื่อนักเรียนไม่สำเร็จ: ${loadError instanceof Error ? loadError.message : 'เกิดข้อผิดพลาดที่ไม่ทราบสาเหตุ'}`);
     } finally {
@@ -99,7 +100,7 @@ export default function CaseFormModal({ onClose, onCreated }: Props) {
       (!roomFilter || String(student.room) === roomFilter);
   });
 
-  function toggleStudent(student: Student) {
+  function toggleStudent(student: itpc_takecare_students) {
     setSelectedStudents((current) => current.some((item) => item.id === student.id)
       ? current.filter((item) => item.id !== student.id)
       : [...current, student]);
@@ -131,29 +132,41 @@ export default function CaseFormModal({ onClose, onCreated }: Props) {
       return;
     }
     if (!await confirm({
-      title: 'ยืนยันบันทึกเคส?',
+      title: caseToEdit ? 'ยืนยันแก้ไขเคส?' : 'ยืนยันบันทึกเคส?',
       description: `นักเรียนที่เลือก: ${selectedStudents.map(studentName).join(', ')}`,
-      confirmLabel: 'บันทึกเคส',
+      confirmLabel: caseToEdit ? 'บันทึกการแก้ไข' : 'บันทึกเคส',
     })) return;
     setSaving(true);
     try {
-      await requestApi<null>('createCase', {
-        caseType,
-        otherText: caseType === 'other' ? otherText.trim() : null,
-        details: details.trim() || null,
-        scheduledAt: new Date(scheduledAt).toISOString(),
-        createdBy: currentUser.id,
-        studentIds: selectedStudents.map((student) => student.id),
-        caretakerIds: selectedCaretakers,
-      });
+      if (caseToEdit) {
+        await requestApi<null>('updateCase', {
+          caseId: caseToEdit.id,
+          caseType,
+          otherText: caseType === 'other' ? otherText.trim() : null,
+          details: details.trim() || null,
+          scheduledAt: new Date(scheduledAt).toISOString(),
+          studentIds: selectedStudents.map((student) => student.id),
+          caretakerIds: selectedCaretakers,
+        });
+      } else {
+        await requestApi<null>('createCase', {
+          caseType,
+          otherText: caseType === 'other' ? otherText.trim() : null,
+          details: details.trim() || null,
+          scheduledAt: new Date(scheduledAt).toISOString(),
+          createdBy: currentUser.id,
+          studentIds: selectedStudents.map((student) => student.id),
+          caretakerIds: selectedCaretakers,
+        });
+      }
     } catch (saveError) {
-      setError(`บันทึกเคสไม่สำเร็จ: ${saveError instanceof Error ? saveError.message : 'เกิดข้อผิดพลาดที่ไม่ทราบสาเหตุ'}`);
+      setError(`${caseToEdit ? t('แก้ไขเคสไม่สำเร็จ') : t('บันทึกเคสไม่สำเร็จ')}: ${saveError instanceof Error ? saveError.message : 'เกิดข้อผิดพลาดที่ไม่ทราบสาเหตุ'}`);
       setSaving(false);
       return;
     } finally {
       setSaving(false);
     }
-    onCreated();
+    onSaved();
     onClose();
   }
 
@@ -164,7 +177,7 @@ export default function CaseFormModal({ onClose, onCreated }: Props) {
         <div className="mb-5 flex items-start justify-between">
           <div>
             <p className="text-sm font-medium text-primary">{t('บันทึกการดูแล')}</p>
-            <h2 id="new-case-title" className="text-xl font-bold text-gray-800">{t('สร้างเคสใหม่')}</h2>
+            <h2 id="new-case-title" className="text-xl font-bold text-gray-800">{t(caseToEdit ? 'แก้ไขเคส' : 'สร้างเคสใหม่')}</h2>
           </div>
           <button type="button" onClick={onClose} aria-label={t('ปิด')} className="rounded-full p-2 text-gray-500 hover:bg-gray-100"><X size={20} /></button>
         </div>
@@ -236,7 +249,7 @@ export default function CaseFormModal({ onClose, onCreated }: Props) {
             {error && <p role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{error}</p>}
             <div className="flex justify-end gap-2 border-t border-gray-100 pt-4">
               <button type="button" onClick={onClose} className="rounded-xl px-4 py-2.5 text-sm text-gray-600 hover:bg-gray-50">{t('ยกเลิก')}</button>
-              <button type="submit" disabled={saving || !currentUser} className="rounded-xl bg-primary px-5 py-2.5 text-sm font-semibold text-white hover:bg-primary-hover disabled:opacity-60">{saving ? t('กำลังบันทึก...') : t('บันทึกเคส')}</button>
+              <button type="submit" disabled={saving || !currentUser} className="rounded-xl bg-primary px-5 py-2.5 text-sm font-semibold text-white hover:bg-primary-hover disabled:opacity-60">{saving ? t('กำลังบันทึก...') : t(caseToEdit ? 'บันทึกการแก้ไข' : 'บันทึกเคส')}</button>
             </div>
           </form>
         )}

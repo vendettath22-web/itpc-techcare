@@ -1,19 +1,30 @@
 import { requestApi } from '@/lib/api';
-import type { Case, Student } from '@/types/database';
+import type { itpc_takecare_cases, itpc_takecare_students } from '@/types/database';
 
-export async function fetchCases(): Promise<Case[]> {
+export async function fetchCases(): Promise<itpc_takecare_cases[]> {
   try {
-    return await requestApi<Case[]>('fetchCases');
+    return await requestApi<itpc_takecare_cases[]>('fetchCases');
   } catch (error) {
     throw new Error(`โหลดข้อมูลเคสไม่สำเร็จ: ${error instanceof Error ? error.message : 'เกิดข้อผิดพลาดที่ไม่ทราบสาเหตุ'}`);
   }
 }
 
-export function studentName(student: Student): string {
+export function studentName(student: itpc_takecare_students): string {
   return [student.first_name_th, student.last_name_th].filter(Boolean).join(' ') || 'ไม่ระบุชื่อ';
 }
 
-export function caseTypeName(caseItem: Pick<Case, 'case_type' | 'other_text'>): string {
+export function studentGradeRoom(grade: string | null, room: number | null): string {
+  const gradeParts = (grade ?? '').replace(/\$/g, '').trim().replace(/\s*\/\s*/g, '/').split('/').filter(Boolean);
+  const roomText = room === null ? '' : String(room);
+
+  while (roomText && gradeParts.length > 2 && gradeParts.at(-1) === roomText && gradeParts.at(-2) === roomText) {
+    gradeParts.pop();
+  }
+  if (!roomText || gradeParts.at(-1) === roomText) return gradeParts.join('/') || '-';
+  return [...gradeParts, roomText].join('/') || roomText;
+}
+
+export function caseTypeName(caseItem: Pick<itpc_takecare_cases, 'case_type' | 'other_text'>): string {
   if (caseItem.case_type === 'low_confidence') return 'ขาดความมั่นใจ';
   if (caseItem.case_type === 'feel_not_smart') return 'รู้สึกว่าตนเองไม่เก่ง';
   return caseItem.other_text || 'อื่น ๆ';

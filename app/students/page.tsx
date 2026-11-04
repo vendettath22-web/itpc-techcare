@@ -13,7 +13,7 @@ import { useSessionCaretaker } from '@/lib/session';
 import { requestApi } from '@/lib/api';
 import { prepareProfilePhoto } from '@/lib/profile-image';
 import { useLanguage } from '@/lib/language';
-import type { Case, Student } from '@/types/database';
+import type { itpc_takecare_cases, itpc_takecare_students } from '@/types/database';
 
 type StudentForm = {
   studentId: string;
@@ -56,8 +56,8 @@ export default function StudentsPage() {
   const router = useRouter();
   const user = useSessionCaretaker();
   const { t } = useLanguage();
-  const [students, setStudents] = useState<Student[]>([]);
-  const [cases, setCases] = useState<Case[]>([]);
+  const [students, setStudents] = useState<itpc_takecare_students[]>([]);
+  const [cases, setCases] = useState<itpc_takecare_cases[]>([]);
   const [academicYears, setAcademicYears] = useState<string[]>([]);
   const [selectedYear, setSelectedYear] = useState('');
   const [search, setSearch] = useState('');
@@ -69,7 +69,7 @@ export default function StudentsPage() {
   const [importFileName, setImportFileName] = useState('');
   const [importAcademicYear, setImportAcademicYear] = useState(DEFAULT_ACADEMIC_YEAR);
   const [importError, setImportError] = useState('');
-  const [editingStudent, setEditingStudent] = useState<Student | null>(null);
+  const [editingStudent, setEditingStudent] = useState<itpc_takecare_students | null>(null);
   const [studentForm, setStudentForm] = useState<StudentForm>({
     studentId: '',
     firstNameTh: '',
@@ -92,7 +92,7 @@ export default function StudentsPage() {
       const years = await requestApi<string[]>('listAcademicYears');
       const targetYear = year || years[0] || DEFAULT_ACADEMIC_YEAR;
       const [studentData, caseData] = await Promise.all([
-        requestApi<Student[]>('listStudents', { academicYear: targetYear }),
+        requestApi<itpc_takecare_students[]>('listStudents', { academicYear: targetYear }),
         fetchCases(),
       ]);
       setAcademicYears(years);
@@ -168,7 +168,7 @@ export default function StudentsPage() {
     }
   }
 
-  function editStudent(student: Student) {
+  function editStudent(student: itpc_takecare_students) {
     setEditingStudent(student);
     setStudentForm({
       studentId: student.student_id ?? '',
@@ -185,7 +185,7 @@ export default function StudentsPage() {
     setShowStudentForm(true);
   }
 
-  async function deactivateStudent(student: Student) {
+  async function deactivateStudent(student: itpc_takecare_students) {
     if (!await confirm({
       title: `${t('ปิดข้อมูล')} ${studentName(student)}?`,
       description: t('ข้อมูลนี้จะไม่แสดงในการใช้งานปกติ แต่ยังคงเก็บอยู่ในฐานข้อมูล'),

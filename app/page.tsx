@@ -11,7 +11,7 @@ import CaseDetailModal from '@/components/CaseDetailModal';
 import { fetchCases, caseTypeName } from '@/lib/cases';
 import { useCurrentDateKey, useSessionCaretaker } from '@/lib/session';
 import { useLanguage } from '@/lib/language';
-import type { Case } from '@/types/database';
+import type { itpc_takecare_cases } from '@/types/database';
 
 function dayKey(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -22,13 +22,13 @@ export default function Home() {
   const user = useSessionCaretaker();
   const { language, t } = useLanguage();
   const todayKey = useCurrentDateKey();
-  const [cases, setCases] = useState<Case[]>([]);
+  const [cases, setCases] = useState<itpc_takecare_cases[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [monthOverride, setMonthOverride] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
   const [showForm, setShowForm] = useState(false);
-  const [selectedCase, setSelectedCase] = useState<Case | null>(null);
+  const [selectedCase, setSelectedCase] = useState<itpc_takecare_cases | null>(null);
   const [exporting, setExporting] = useState(false);
   const monthKey = monthOverride ?? todayKey.slice(0, 7);
   const month = parseISO(`${monthKey}-01`);
@@ -205,7 +205,7 @@ export default function Home() {
         </div>
       </section>
       <button aria-label={t('สร้างเคสใหม่')} onClick={() => setShowForm(true)} className="fixed bottom-6 right-6 z-30 grid h-14 w-14 place-items-center rounded-2xl bg-primary text-white shadow-[0_10px_26px_rgba(112,65,138,0.35)] transition hover:-translate-y-1 hover:bg-primary-hover sm:bottom-8 sm:right-8"><Plus size={27} /></button>
-      {showForm && <CaseFormModal onClose={() => setShowForm(false)} onCreated={() => void loadCases()} />}
+      {showForm && <CaseFormModal onClose={() => setShowForm(false)} onSaved={() => void loadCases()} />}
       {selectedCase && <CaseDetailModal caseItem={selectedCase} onClose={() => setSelectedCase(null)} onUpdated={() => void loadCases()} />}
     </main>
   );

@@ -1,4 +1,4 @@
-export interface Caretaker {
+export interface itpc_takecare_caretakers {
   id: string;
   name: string;
   role: 'admin' | 'caretaker';
@@ -11,7 +11,7 @@ export interface Caretaker {
   created_at: string;
 }
 
-export interface Student {
+export interface itpc_takecare_students {
   id: string;
   student_id: string | null;
   first_name_th: string | null;
@@ -27,7 +27,7 @@ export interface Student {
   case_count?: number;
 }
 
-export interface Case {
+export interface itpc_takecare_cases {
   id: string;
   case_type: 'low_confidence' | 'feel_not_smart' | 'other';
   other_text: string | null;
@@ -38,11 +38,11 @@ export interface Case {
   created_by_name?: string | null;
   created_at: string;
   updated_at: string;
-  students?: Student[];
-  caretakers?: Caretaker[];
+  students?: itpc_takecare_students[];
+  caretakers?: itpc_takecare_caretakers[];
 }
 
-export interface CaseUpdate {
+export interface itpc_takecare_case_updates {
   id: string;
   case_id: string;
   caretaker_id: string;
@@ -53,7 +53,7 @@ export interface CaseUpdate {
   caretaker_name?: string;
 }
 
-export interface CaseSignature {
+export interface itpc_takecare_case_signatures {
   id: string;
   case_id: string;
   signer_name: string;
@@ -62,7 +62,7 @@ export interface CaseSignature {
   signed_at: string;
 }
 
-export interface AppUsageLog {
+export interface itpc_takecare_app_usage_logs {
   id: string;
   caretaker_id: string | null;
   caretaker_name: string;

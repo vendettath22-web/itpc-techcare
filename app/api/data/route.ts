@@ -1,6 +1,6 @@
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import type { Case, Caretaker, Student } from '@/types/database';
+import type { itpc_takecare_cases, itpc_takecare_caretakers, itpc_takecare_students } from '@/types/database';
 
 type ApiBody = Record<string, unknown> & { action?: unknown };
 type ImportedStudent = {
@@ -12,10 +12,10 @@ type ImportedStudent = {
   room: number;
   gender: string | null;
 };
-type CaseStudentRow = { case_id: string; student_id: string };
-type CaseCaretakerRow = { case_id: string; caretaker_id: string };
+type itpc_takecare_case_students = { case_id: string; student_id: string };
+type itpc_takecare_case_caretakers = { case_id: string; caretaker_id: string };
 type SessionClaims = { sub: string; exp: number };
-type SessionCaretaker = Pick<Caretaker, 'id' | 'name' | 'role' | 'phone' | 'age' | 'profile_image_path'>;
+type SessionCaretaker = Pick<itpc_takecare_caretakers, 'id' | 'name' | 'role' | 'phone' | 'age' | 'profile_image_path'>;
 type PublicAdminContact = { id: string; name: string; phone: string | null; profile_image_path: string | null };
 
 const COOKIE_NAME = 'itpc_session';
@@ -153,7 +153,7 @@ async function recordUsageLog(
   action: string,
   details: string | null = null,
 ): Promise<void> {
-  const { error } = await supabase.from('app_usage_logs').insert({
+  const { error } = await supabase.from('itpc_takecare_app_usage_logs').insert({
     caretaker_id: caretaker.id,
     caretaker_name: caretaker.name,
     caretaker_role: caretaker.role,
@@ -279,7 +279,7 @@ async function getActiveCaretaker(
 ): Promise<{ client: SupabaseClient; caretaker: SessionCaretaker | null }> {
   const client = supabaseClient(key, token);
   const { data, error } = await client
-    .from('caretakers')
+    .from('itpc_takecare_caretakers')
     .select('id, name, role, phone, age, profile_image_path')
     .eq('id', id)
     .is('deactivated_at', null)
@@ -381,7 +381,7 @@ export async function POST(request: Request) {
     switch (action) {
       case 'listCaretakers': {
         const { data, error } = await supabase
-          .from('caretakers')
+          .from('itpc_takecare_caretakers')
           .select('id, name, role, created_at, deactivated_at')
           .is('deactivated_at', null)
           .order('name');
@@ -391,7 +391,7 @@ export async function POST(request: Request) {
       case 'adminListCaretakers': {
         if (!isAdmin(caretaker)) return response('ต้องใช้สิทธิ์ admin', 403);
         const { data, error } = await supabase
-          .from('caretakers')
+          .from('itpc_takecare_caretakers')
           .select('id, name, role, created_at, deactivated_at, phone, age, profile_image_path')
           .order('name');
         throwIfError(error);
@@ -416,7 +416,7 @@ export async function POST(request: Request) {
       case 'adminListUsageLogs': {
         if (!isAdmin(caretaker)) return response('ต้องใช้สิทธิ์ admin', 403);
         const { data, error } = await supabase
-          .from('app_usage_logs')
+          .from('itpc_takecare_app_usage_logs')
           .select('id, caretaker_id, caretaker_name, caretaker_role, action, details, used_at')
           .order('used_at', { ascending: false })
           .limit(500);
@@ -429,7 +429,7 @@ export async function POST(request: Request) {
         const age = optionalInteger(body, 'age');
         const photoPath = await uploadCaretakerPhoto(supabase, caretaker.id, body.photoDataUrl);
         const { data, error } = await supabase
-          .from('caretakers')
+          .from('itpc_takecare_caretakers')
           .update({
             name,
             phone,
@@ -473,7 +473,7 @@ export async function POST(request: Request) {
         if (!isAdmin(caretaker)) return response('ต้องใช้สิทธิ์ admin', 403);
         const id = requiredString(body, 'id');
         const { data: current, error: currentError } = await supabase
-          .from('caretakers')
+          .from('itpc_takecare_caretakers')
           .select('name, profile_image_path')
           .eq('id', id)
           .maybeSingle();
@@ -500,7 +500,7 @@ export async function POST(request: Request) {
         if (!isAdmin(caretaker)) return response('ต้องใช้สิทธิ์ admin', 403);
         const id = requiredString(body, 'id');
         const { data: target, error: targetError } = await supabase
-          .from('caretakers')
+          .from('itpc_takecare_caretakers')
           .select('name')
           .eq('id', id)
           .maybeSingle();
@@ -514,7 +514,7 @@ export async function POST(request: Request) {
       }
       case 'listAcademicYears': {
         const { data, error } = await supabase
-          .from('students')
+          .from('itpc_takecare_students')
           .select('academic_year')
           .is('deactivated_at', null)
           .order('academic_year', { ascending: false });
@@ -523,7 +523,7 @@ export async function POST(request: Request) {
       }
       case 'listStudents': {
         let query = supabase
-          .from('students')
+          .from('itpc_takecare_students')
           .select('*')
           .is('deactivated_at', null)
           .order('first_name_th');
@@ -609,7 +609,7 @@ export async function POST(request: Request) {
         }
         const academicYear = requiredString(body, 'academicYear');
         const { data: current, error: currentError } = await supabase
-          .from('students')
+          .from('itpc_takecare_students')
           .select('first_name_th, last_name_th, academic_year, profile_image_path')
           .eq('id', id)
           .is('deactivated_at', null)
@@ -644,7 +644,7 @@ export async function POST(request: Request) {
         if (!isAdmin(caretaker)) return response('ต้องใช้สิทธิ์ admin', 403);
         const id = requiredString(body, 'id');
         const { data: target, error: targetError } = await supabase
-          .from('students')
+          .from('itpc_takecare_students')
           .select('first_name_th, last_name_th, academic_year')
           .eq('id', id)
           .maybeSingle();
@@ -664,7 +664,7 @@ export async function POST(request: Request) {
       }
       case 'getStudent': {
         const { data, error } = await supabase
-          .from('students')
+          .from('itpc_takecare_students')
           .select('*')
           .eq('id', requiredString(body, 'id'))
           .is('deactivated_at', null)
@@ -684,11 +684,11 @@ export async function POST(request: Request) {
       case 'fetchCases': {
         const [caseResult, studentLinks, caretakerLinks, studentResult, caretakerResult] =
           await Promise.all([
-            supabase.from('cases').select('*').order('scheduled_at', { ascending: false }),
-            supabase.from('case_students').select('case_id, student_id'),
-            supabase.from('case_caretakers').select('case_id, caretaker_id'),
-            supabase.from('students').select('*').is('deactivated_at', null),
-            supabase.from('caretakers')
+            supabase.from('itpc_takecare_cases').select('*').order('scheduled_at', { ascending: false }),
+            supabase.from('itpc_takecare_case_students').select('case_id, student_id'),
+            supabase.from('itpc_takecare_case_caretakers').select('case_id, caretaker_id'),
+            supabase.from('itpc_takecare_students').select('*').is('deactivated_at', null),
+            supabase.from('itpc_takecare_caretakers')
               .select('id, name, role, created_at, deactivated_at')
               .is('deactivated_at', null),
           ]);
@@ -700,25 +700,25 @@ export async function POST(request: Request) {
           caretakerResult.error,
         );
 
-        const studentsById = new Map<string, Student>(
-          (studentResult.data ?? []).map((student) => [student.id, student as Student]),
+        const studentsById = new Map<string, itpc_takecare_students>(
+          (studentResult.data ?? []).map((student) => [student.id, student as itpc_takecare_students]),
         );
-        const caretakersById = new Map<string, Caretaker>(
-          (caretakerResult.data ?? []).map((item) => [item.id, item as Caretaker]),
+        const caretakersById = new Map<string, itpc_takecare_caretakers>(
+          (caretakerResult.data ?? []).map((item) => [item.id, item as itpc_takecare_caretakers]),
         );
-        const studentsByCase = new Map<string, Student[]>();
-        const caretakersByCase = new Map<string, Caretaker[]>();
-        for (const row of (studentLinks.data ?? []) as CaseStudentRow[]) {
+        const studentsByCase = new Map<string, itpc_takecare_students[]>();
+        const caretakersByCase = new Map<string, itpc_takecare_caretakers[]>();
+        for (const row of (studentLinks.data ?? []) as itpc_takecare_case_students[]) {
           const student = studentsById.get(row.student_id);
           if (student) studentsByCase.set(row.case_id, [...(studentsByCase.get(row.case_id) ?? []), student]);
         }
-        for (const row of (caretakerLinks.data ?? []) as CaseCaretakerRow[]) {
+        for (const row of (caretakerLinks.data ?? []) as itpc_takecare_case_caretakers[]) {
           const assigned = caretakersById.get(row.caretaker_id);
           if (assigned) {
             caretakersByCase.set(row.case_id, [...(caretakersByCase.get(row.case_id) ?? []), assigned]);
           }
         }
-        return response(((caseResult.data ?? []) as Case[]).map((caseItem) => ({
+        return response(((caseResult.data ?? []) as itpc_takecare_cases[]).map((caseItem) => ({
           ...caseItem,
           created_by: caretakersById.has(caseItem.created_by) ? caseItem.created_by : '',
           created_by_name: caretakersById.get(caseItem.created_by)?.name ?? null,
@@ -729,9 +729,9 @@ export async function POST(request: Request) {
       case 'caseDetails': {
         const caseId = requiredString(body, 'caseId');
         const [updateResult, signatureResult, caretakerResult] = await Promise.all([
-          supabase.from('case_updates').select('*').eq('case_id', caseId).order('created_at', { ascending: false }),
-          supabase.from('case_signatures').select('*').eq('case_id', caseId).order('signed_at', { ascending: false }),
-          supabase.from('caretakers')
+          supabase.from('itpc_takecare_case_updates').select('*').eq('case_id', caseId).order('created_at', { ascending: false }),
+          supabase.from('itpc_takecare_case_signatures').select('*').eq('case_id', caseId).order('signed_at', { ascending: false }),
+          supabase.from('itpc_takecare_caretakers')
             .select('id, name, role, created_at, deactivated_at')
             .is('deactivated_at', null),
         ]);
@@ -768,9 +768,29 @@ export async function POST(request: Request) {
         );
         return response(data);
       }
+      case 'updateCase': {
+        if (!isAdmin(caretaker)) return response('ต้องใช้สิทธิ์ admin', 403);
+        const caseId = requiredString(body, 'caseId');
+        const caseType = requiredString(body, 'caseType');
+        if (!['low_confidence', 'feel_not_smart', 'other'].includes(caseType)) {
+          return response('Invalid caseType', 400);
+        }
+        const { error } = await supabase.rpc('admin_update_case_with_relations', {
+          p_case_id: caseId,
+          p_case_type: caseType,
+          p_other_text: optionalString(body, 'otherText'),
+          p_details: optionalString(body, 'details'),
+          p_scheduled_at: requiredString(body, 'scheduledAt'),
+          p_student_ids: stringArray(body, 'studentIds'),
+          p_caretaker_ids: stringArray(body, 'caretakerIds'),
+        });
+        throwIfError(error);
+        await recordUsageLog(supabase, caretaker, 'update_case', `case ${caseId}`);
+        return response(null);
+      }
       case 'insertCaseUpdate': {
         const caseId = requiredString(body, 'caseId');
-        const { error } = await supabase.from('case_updates').insert({
+        const { error } = await supabase.from('itpc_takecare_case_updates').insert({
           case_id: caseId,
           caretaker_id: caretaker.id,
           activity_note: requiredString(body, 'activityNote'),
@@ -784,7 +804,7 @@ export async function POST(request: Request) {
       case 'updateCaseStatus': {
         const status = body.status === 'done' ? 'done' : 'planned';
         const caseId = requiredString(body, 'caseId');
-        const { data, error } = await supabase.from('cases').update({
+        const { data, error } = await supabase.from('itpc_takecare_cases').update({
           status,
           updated_at: new Date().toISOString(),
         }).eq('id', caseId).select('id').maybeSingle();
@@ -795,7 +815,7 @@ export async function POST(request: Request) {
       }
       case 'listCaseUpdates': {
         const { data, error } = await supabase
-          .from('case_updates')
+          .from('itpc_takecare_case_updates')
           .select('*')
           .eq('case_id', requiredString(body, 'caseId'))
           .order('created_at', { ascending: false });
@@ -803,7 +823,7 @@ export async function POST(request: Request) {
         return response(data ?? []);
       }
       case 'saveSignature': {
-        const { data, error } = await supabase.from('case_signatures').insert({
+        const { data, error } = await supabase.from('itpc_takecare_case_signatures').insert({
           case_id: requiredString(body, 'caseId'),
           signer_name: requiredString(body, 'signerName'),
           signer_role: requiredString(body, 'signerRole'),
@@ -812,6 +832,38 @@ export async function POST(request: Request) {
         throwIfError(error);
         await recordUsageLog(supabase, caretaker, 'save_signature', `case ${data.case_id}`);
         return response(data);
+      }
+      case 'deleteSignature': {
+        const signatureId = requiredString(body, 'signatureId');
+        const { data: signature, error: signatureError } = await supabase
+          .from('itpc_takecare_case_signatures')
+          .select('id, case_id')
+          .eq('id', signatureId)
+          .maybeSingle();
+        throwIfError(signatureError);
+        if (!signature) return response('ไม่พบลายเซ็น', 404);
+
+        if (!isAdmin(caretaker)) {
+          const { data: assignment, error: assignmentError } = await supabase
+            .from('itpc_takecare_case_caretakers')
+            .select('case_id')
+            .eq('case_id', signature.case_id)
+            .eq('caretaker_id', caretaker.id)
+            .maybeSingle();
+          throwIfError(assignmentError);
+          if (!assignment) return response('ไม่มีสิทธิ์ลบลายเซ็นของเคสนี้', 403);
+        }
+
+        const { data, error } = await supabase
+          .from('itpc_takecare_case_signatures')
+          .delete()
+          .eq('id', signatureId)
+          .select('id')
+          .maybeSingle();
+        throwIfError(error);
+        if (!data) return response('ไม่มีสิทธิ์ลบลายเซ็นของเคสนี้', 403);
+        await recordUsageLog(supabase, caretaker, 'delete_signature', `case ${signature.case_id}`);
+        return response(null);
       }
       default:
         return response('Unknown API action', 400);

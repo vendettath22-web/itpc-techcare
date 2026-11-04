@@ -1,32 +1,45 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, Download, FileSpreadsheet, FileText } from 'lucide-react';
+import { ArrowLeft, Download, FileSpreadsheet, FileText, X } from 'lucide-react';
 import ImagePreview from '@/components/ImagePreview';
 import * as XLSX from 'xlsx';
 import Navbar from '@/components/Navbar';
-import { caseTypeName, fetchCases, formatThaiDate, studentName } from '@/lib/cases';
+import { caseTypeName, fetchCases, formatThaiDate, studentGradeRoom, studentName } from '@/lib/cases';
 import { escapeHtml, useSessionCaretaker } from '@/lib/session';
-import { downloadThaiPdf } from '@/lib/pdf';
+import { createStudentReportDocument } from '@/lib/student-report';
 import { requestApi } from '@/lib/api';
 import { useLanguage } from '@/lib/language';
-import type { Case, CaseSignature, CaseUpdate, Student } from '@/types/database';
+import type { itpc_takecare_cases, itpc_takecare_case_signatures, itpc_takecare_case_updates, itpc_takecare_students } from '@/types/database';
+
+function studentGenderInThai(gender: string | null): string {
+  if (!gender?.trim()) return '-';
+  const normalized = gender.trim().toLocaleLowerCase();
+  if (['girl', 'female', 'f', 'หญิง'].includes(normalized)) return 'หญิง';
+  if (['boy', 'male', 'm', 'ชาย'].includes(normalized)) return 'ชาย';
+  if (['other', 'others', 'non-binary', 'nonbinary', 'อื่น', 'อื่นๆ'].includes(normalized)) return 'อื่นๆ';
+  if (['unknown', 'unspecified', 'prefer not to say', 'ไม่ระบุ'].includes(normalized)) return 'ไม่ระบุ';
+  return gender.trim();
+}
 
 export default function StudentHistory({ id }: { id: string }) {
   const router = useRouter();
   const user = useSessionCaretaker();
   const { t } = useLanguage();
-  const [student, setStudent] = useState<Student | null>(null);
-  const [cases, setCases] = useState<Case[]>([]);
+  const [student, setStudent] = useState<itpc_takecare_students | null>(null);
+  const [cases, setCases] = useState<itpc_takecare_cases[]>([]);
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
   const [error, setError] = useState('');
+  const [pdfPreviewUrl, setPdfPreviewUrl] = useState('');
+  const [pdfPreviewReady, setPdfPreviewReady] = useState(false);
+  const pdfPreviewFrame = useRef<HTMLIFrameElement>(null);
 
   const loadHistory = useCallback(async () => {
     const [studentResult, allCases] = await Promise.all([
-      requestApi<Student | null>('getStudent', { id }).then((data) => ({ data, error: null })).catch((loadError: unknown) => ({ data: null, error: loadError })),
+      requestApi<itpc_takecare_students | null>('getStudent', { id }).then((data) => ({ data, error: null })).catch((loadError: unknown) => ({ data: null, error: loadError })),
       fetchCases().then((data) => ({ data, error: null })).catch((loadError: unknown) => ({ data: null, error: loadError })),
     ]);
     const loadError = studentResult.error ?? allCases.error;
@@ -50,12 +63,17 @@ export default function StudentHistory({ id }: { id: string }) {
 
   const orderedCases = useMemo(() => [...cases].sort((a, b) => new Date(b.scheduled_at).getTime() - new Date(a.scheduled_at).getTime()), [cases]);
 
+  useEffect(() => {
+    if (!pdfPreviewUrl) return;
+    return () => URL.revokeObjectURL(pdfPreviewUrl);
+  }, [pdfPreviewUrl]);
+
   async function loadExportDetails() {
     return Promise.all(orderedCases.map(async (caseItem) => ({
       caseItem,
       details: await requestApi<{
-        updates: CaseUpdate[];
-        signatures: CaseSignature[];
+        updates: itpc_takecare_case_updates[];
+        signatures: itpc_takecare_case_signatures[];
         caretakers: { id: string; name: string }[];
       }>('caseDetails', { caseId: caseItem.id }),
     })));
@@ -67,24 +85,23 @@ export default function StudentHistory({ id }: { id: string }) {
     setError('');
     try {
       const history = await loadExportDetails();
+      const studentGender = studentGenderInThai(student.gender);
       const html = `<p class="pdf-muted">${escapeHtml(t('จัดทำเมื่อ'))} ${escapeHtml(formatThaiDate(new Date().toISOString()))}</p>
         <section class="pdf-student-profile">
           ${student.profile_photo_url ? `<img class="pdf-student-photo" src="${escapeHtml(student.profile_photo_url)}" alt="${escapeHtml(t('รูปนักเรียน'))}">` : ''}
           <div class="pdf-student-heading">
-            <p class="pdf-student-kicker">${escapeHtml(t('ประวัติรายบุคคล'))}</p>
-            <h2 class="pdf-student-name">${escapeHtml(studentName(student))}</h2>
-            <p class="pdf-student-subtitle">${escapeHtml(t('รหัสนักเรียน'))}: ${escapeHtml(student.student_id || '-')} · ${escapeHtml(t('ปีการศึกษา'))} ${escapeHtml(student.academic_year)}</p>
+            <p class="pdf-student-kicker">${escapeHtml(t('ข้อมูลนักเรียนและประวัติรายบุคคล'))}</p>
+            <div class="pdf-student-grid">
+              <div class="pdf-info-item pdf-info-item-wide"><span>${escapeHtml(t('ชื่อ-สกุล'))}</span><strong>${escapeHtml(studentName(student))}</strong></div>
+              <div class="pdf-info-item pdf-info-item-wide"><span>${escapeHtml(t('ชื่อเล่น'))}</span><strong>${escapeHtml(student.nickname_th || '-')}</strong></div>
+              <div class="pdf-info-item"><span>${escapeHtml(t('รหัสนักเรียน'))}</span><strong>${escapeHtml(student.student_id || '-')}</strong></div>
+              <div class="pdf-info-item"><span>${escapeHtml(t('ระดับชั้น/ห้อง'))}</span><strong>${escapeHtml(studentGradeRoom(student.grade, student.room))}</strong></div>
+              <div class="pdf-info-item"><span>${escapeHtml(t('เพศ'))}</span><strong>${escapeHtml(studentGender)}</strong></div>
+              <div class="pdf-info-item"><span>${escapeHtml(t('ปีการศึกษา'))}</span><strong>${escapeHtml(student.academic_year)}</strong></div>
+            </div>
           </div>
-          <div class="pdf-student-count"><strong>${orderedCases.length}</strong><span>${escapeHtml(t('เคส'))}</span></div>
         </section>
-        <h2 class="pdf-section-heading">${escapeHtml(t('ข้อมูลนักเรียน'))}</h2>
-        <div class="pdf-info-grid">
-          <div class="pdf-info-item"><span>${escapeHtml(t('ชื่อเล่น'))}</span><strong>${escapeHtml(student.nickname_th || '-')}</strong></div>
-          <div class="pdf-info-item"><span>${escapeHtml(t('ระดับชั้น'))}</span><strong>${escapeHtml(student.grade || '-')}</strong></div>
-          <div class="pdf-info-item"><span>${escapeHtml(t('ห้อง'))}</span><strong>${escapeHtml(String(student.room ?? '-'))}</strong></div>
-          <div class="pdf-info-item"><span>${escapeHtml(t('เพศ'))}</span><strong>${escapeHtml(student.gender || '-')}</strong></div>
-        </div>
-        <h2 class="pdf-section-heading">${escapeHtml(t('ประวัติเคส'))}<span class="pdf-count-badge">${orderedCases.length} ${escapeHtml(t('เคส'))}</span></h2>
+        <h2 class="pdf-section-heading">${escapeHtml(t('ประวัติเคส'))}</h2>
         ${history.map(({ caseItem, details }) => {
           const namesById = Object.fromEntries(details.caretakers.map((caretaker) => [caretaker.id, caretaker.name]));
           return `<article class="pdf-case-card">
@@ -98,33 +115,48 @@ export default function StudentHistory({ id }: { id: string }) {
               <p class="pdf-full-width"><b>${escapeHtml(t('ผู้ดูแล:'))}</b> ${escapeHtml(caseItem.caretakers?.map((caretaker) => caretaker.name).join(', ') || '-')}</p>
             </div>
             <p class="pdf-case-description"><b>${escapeHtml(t('รายละเอียด:'))}</b> ${escapeHtml(caseItem.details || '-')}</p>
-            <h3 class="pdf-case-section-title">${escapeHtml(t('บันทึกติดตาม'))} (${details.updates.length} ${escapeHtml(t('รายการ'))})</h3>
+            <h3 class="pdf-case-section-title">${escapeHtml(t('บันทึกติดตาม'))}</h3>
             ${details.updates.map((update) => `<div class="pdf-update">
               <p><b>${escapeHtml(t('ผู้บันทึก:'))}</b> ${escapeHtml(namesById[update.caretaker_id] || t('ผู้ดูแล'))} · <b>${escapeHtml(t('วันเวลาที่บันทึก:'))}</b> ${escapeHtml(formatThaiDate(update.created_at))}</p>
               <p><b>${escapeHtml(t('กิจกรรม:'))}</b> ${escapeHtml(update.activity_note)}</p>
               ${update.result_note ? `<p><b>${escapeHtml(t('ผลลัพธ์:'))}</b> ${escapeHtml(update.result_note)}</p>` : ''}
               ${update.next_step ? `<p><b>${escapeHtml(t('ขั้นตอนถัดไป:'))}</b> ${escapeHtml(update.next_step)}</p>` : ''}
             </div>`).join('') || `<p class="pdf-empty">${escapeHtml(t('ยังไม่มีบันทึกติดตาม'))}</p>`}
-            <h3 class="pdf-case-section-title">${escapeHtml(t('ลายเซ็น'))} (${details.signatures.length} ${escapeHtml(t('รายการ'))})</h3>
-            ${details.signatures.map((signature) => `<div class="pdf-card pdf-signature-card">
-              <div><p><b>${escapeHtml(t('ผู้ลงนาม:'))}</b> ${escapeHtml(signature.signer_name)}</p>
-              <p><b>${escapeHtml(t('บทบาท:'))}</b> ${escapeHtml(signature.signer_role)}</p>
-              <p><b>${escapeHtml(t('วันเวลาที่ลงนาม:'))}</b> ${escapeHtml(formatThaiDate(signature.signed_at))}</p></div>
-              <img class="pdf-signature" src="${escapeHtml(signature.signature_data)}" alt="ลายเซ็น ${escapeHtml(signature.signer_name)}">
-            </div>`).join('') || `<p class="pdf-empty">${escapeHtml(t('ยังไม่มีลายเซ็น'))}</p>`}
+            <section class="pdf-signatures">
+              <h3 class="pdf-case-section-title">${escapeHtml(t('ลายเซ็น'))}</h3>
+              <div class="pdf-signature-list">${details.signatures.map((signature) => `<div class="pdf-card pdf-signature-card">
+              <div class="pdf-signature-block">
+                <img class="pdf-signature" src="${escapeHtml(signature.signature_data)}" alt="ลายเซ็น ${escapeHtml(signature.signer_name)}">
+                <div class="pdf-signature-name">(${escapeHtml(signature.signer_name)})</div>
+                <div class="pdf-signature-role">${escapeHtml(signature.signer_role)}</div>
+                <div class="pdf-signature-date">${escapeHtml(formatThaiDate(signature.signed_at))}</div>
+              </div>
+              </div>`).join('') || `<p class="pdf-empty">${escapeHtml(t('ยังไม่มีลายเซ็น'))}</p>`}</div>
+            </section>
           </article>`;
         }).join('') || `<p class="pdf-empty">${escapeHtml(t('ยังไม่มีประวัติเคส'))}</p>`}`;
       const safeName = (student.student_id || student.id).replace(/[<>:"/\\|?*]/g, '_');
-      await downloadThaiPdf(
-        t('รายงานประวัติการดูแลนักเรียน'),
-        html,
-        `itpctakecare-history-${safeName}`,
-      );
+      const title = `${t('รายงานประวัติการดูแลนักเรียน')} ${safeName}`;
+      const logoUrl = new URL('/itpc-takecare-logo-v2.png', window.location.origin).href;
+      const blob = new Blob([createStudentReportDocument(title, html, logoUrl)], { type: 'text/html' });
+      const previewUrl = URL.createObjectURL(blob);
+      setPdfPreviewReady(false);
+      setPdfPreviewUrl(previewUrl);
     } catch (exportError) {
       setError(`${t('ส่งออกรายงานไม่สำเร็จ')}: ${exportError instanceof Error ? exportError.message : t('เกิดข้อผิดพลาดที่ไม่ทราบสาเหตุ')}`);
     } finally {
       setExporting(false);
     }
+  }
+
+  function printPdf() {
+    const reportWindow = pdfPreviewFrame.current?.contentWindow;
+    if (!reportWindow || !pdfPreviewReady) {
+      setError(t('ไม่สามารถเปิดรายงานเพื่อพิมพ์ได้ กรุณาลองอีกครั้ง'));
+      return;
+    }
+    reportWindow.focus();
+    reportWindow.print();
   }
 
   async function exportExcel() {
@@ -205,7 +237,7 @@ export default function StudentHistory({ id }: { id: string }) {
             {student.profile_photo_url && <ImagePreview src={student.profile_photo_url} alt={`รูปนักเรียน ${studentName(student)}`} width={76} height={76} className="h-[76px] w-[76px] rounded-2xl" />}
             <div><p className="text-sm font-medium text-primary">{t('ประวัติรายบุคคล')}</p><h1 className="mt-1 text-2xl font-bold text-gray-800">{studentName(student)}</h1><p className="mt-2 text-sm text-gray-500">{t('รหัส')} {student.student_id || '-'} · {t('ชื่อเล่น')} {student.nickname_th || '-'} · {t('ชั้น')} {student.grade ?? '-'} {t('ห้อง')} {student.room ?? '-'}</p><p className="mt-3 text-sm font-medium text-gray-700">{t('มีประวัติทั้งหมด')} {orderedCases.length} {t('เคส')}</p></div>
           </div>
-          <div className="flex flex-wrap gap-2"><button disabled={exporting} onClick={() => void exportPdf()} className="flex items-center gap-2 rounded-xl border border-gray-200 px-3 py-2 text-sm hover:bg-gray-50 disabled:opacity-60"><FileText size={16} />{exporting ? t('กำลังจัดทำ...') : t('ดาวน์โหลด PDF')}</button><button disabled={exporting} onClick={() => void exportExcel()} className="flex items-center gap-2 rounded-xl bg-primary px-3 py-2 text-sm font-medium text-white hover:bg-primary-hover disabled:opacity-60"><FileSpreadsheet size={16} />{exporting ? t('กำลังจัดทำ...') : t('ดาวน์โหลด Excel')}</button></div>
+          <div className="flex flex-wrap gap-2"><button disabled={exporting} onClick={() => void exportPdf()} className="flex items-center gap-2 rounded-xl border border-gray-200 px-3 py-2 text-sm hover:bg-gray-50 disabled:opacity-60"><FileText size={16} />{exporting ? t('กำลังจัดทำ...') : t('ดูตัวอย่าง PDF')}</button><button disabled={exporting} onClick={() => void exportExcel()} className="flex items-center gap-2 rounded-xl bg-primary px-3 py-2 text-sm font-medium text-white hover:bg-primary-hover disabled:opacity-60"><FileSpreadsheet size={16} />{exporting ? t('กำลังจัดทำ...') : t('ดาวน์โหลด Excel')}</button></div>
         </div>
         <div className="mb-3 flex items-center gap-2"><Download size={17} className="text-primary" /><h2 className="font-bold text-gray-800">{t('ประวัติทุกเคส')}</h2></div>
         {orderedCases.length ? <div className="space-y-3">{orderedCases.map((item) => <article key={item.id} className="rounded-2xl border border-[#eee9ef] bg-white p-4 sm:p-5">
@@ -214,5 +246,17 @@ export default function StudentHistory({ id }: { id: string }) {
         </article>)}</div> : <div className="rounded-2xl border border-dashed border-gray-300 bg-white py-12 text-center text-sm text-gray-500">{t('ยังไม่มีประวัติเคสสำหรับนักเรียนคนนี้')}</div>}
       </>}
     </section>
+    {pdfPreviewUrl && <div className="fixed inset-0 z-[60] flex flex-col bg-black/70 p-3 sm:p-6">
+      <section role="dialog" aria-modal="true" aria-labelledby="student-pdf-preview-title" className="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+        <header className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-200 px-4 py-3 sm:px-6">
+          <h2 id="student-pdf-preview-title" className="font-semibold text-gray-800">{t('ตัวอย่างรายงาน PDF')}</h2>
+          <div className="flex items-center gap-2">
+            <button type="button" disabled={!pdfPreviewReady} onClick={printPdf} className="flex items-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-white hover:bg-primary-hover disabled:opacity-60"><Download size={16} />{t('พิมพ์ / บันทึก PDF')}</button>
+            <button type="button" onClick={() => { setPdfPreviewUrl(''); setPdfPreviewReady(false); }} aria-label={t('ปิด')} className="rounded-lg p-2 text-gray-500 hover:bg-gray-100"><X size={19} /></button>
+          </div>
+        </header>
+        <iframe ref={pdfPreviewFrame} title={t('ตัวอย่างรายงาน PDF')} src={pdfPreviewUrl} onLoad={() => setPdfPreviewReady(true)} className="min-h-0 w-full flex-1 bg-gray-100" />
+      </section>
+    </div>}
   </main>;
 }

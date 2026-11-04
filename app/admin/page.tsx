@@ -10,7 +10,7 @@ import { requestApi } from '@/lib/api';
 import { prepareProfilePhoto } from '@/lib/profile-image';
 import { useLanguage } from '@/lib/language';
 import { useSessionCaretaker } from '@/lib/session';
-import type { AppUsageLog, Caretaker } from '@/types/database';
+import type { itpc_takecare_app_usage_logs, itpc_takecare_caretakers } from '@/types/database';
 
 type CaretakerForm = {
   name: string;
@@ -22,6 +22,11 @@ type CaretakerForm = {
 };
 
 const emptyForm: CaretakerForm = { name: '', role: 'caretaker', pin: '', phone: '', age: '', photoDataUrl: '' };
+
+function parseBangkokTimestamp(value: string): Date {
+  if (/[zZ]$|[+-]\d{2}(?::?\d{2})?$/.test(value)) return new Date(value);
+  return new Date(`${value.replace(' ', 'T')}+07:00`);
+}
 
 const usageActionLabels: Record<string, string> = {
   login: 'เข้าสู่ระบบ',
@@ -35,17 +40,19 @@ const usageActionLabels: Record<string, string> = {
   update_student: 'แก้ไขข้อมูลนักเรียน',
   deactivate_student: 'ปิดข้อมูลนักเรียน',
   create_case: 'สร้างเคส',
+  update_case: 'แก้ไขเคส',
   add_case_update: 'บันทึกติดตามเคส',
   update_case_status: 'เปลี่ยนสถานะเคส',
   save_signature: 'บันทึกลายเซ็น',
+  delete_signature: 'ลบลายเซ็น',
 };
 
 export default function AdminPage() {
   const router = useRouter();
   const user = useSessionCaretaker();
   const { language, t } = useLanguage();
-  const [caretakers, setCaretakers] = useState<Caretaker[]>([]);
-  const [usageLogs, setUsageLogs] = useState<AppUsageLog[]>([]);
+  const [caretakers, setCaretakers] = useState<itpc_takecare_caretakers[]>([]);
+  const [usageLogs, setUsageLogs] = useState<itpc_takecare_app_usage_logs[]>([]);
   const [drafts, setDrafts] = useState<Record<string, CaretakerForm>>({});
   const [newCaretaker, setNewCaretaker] = useState<CaretakerForm>(emptyForm);
   const [loading, setLoading] = useState(true);
@@ -58,7 +65,7 @@ export default function AdminPage() {
 
   const loadCaretakers = useCallback(async () => {
     try {
-      const data = await requestApi<Caretaker[]>('adminListCaretakers');
+      const data = await requestApi<itpc_takecare_caretakers[]>('adminListCaretakers');
       setCaretakers(data);
       setDrafts(Object.fromEntries(data.map((caretaker) => [caretaker.id, {
         name: caretaker.name,
@@ -80,7 +87,7 @@ export default function AdminPage() {
     setUsageLogsLoading(true);
     setUsageLogError('');
     try {
-      const data = await requestApi<AppUsageLog[]>('adminListUsageLogs');
+      const data = await requestApi<itpc_takecare_app_usage_logs[]>('adminListUsageLogs');
       setUsageLogs(data);
     } catch (loadError) {
       setUsageLogError(loadError instanceof Error ? loadError.message : t('โหลดบันทึกการใช้งานไม่สำเร็จ'));
@@ -146,7 +153,7 @@ export default function AdminPage() {
     }
   }
 
-  async function deactivateCaretaker(caretaker: Caretaker) {
+  async function deactivateCaretaker(caretaker: itpc_takecare_caretakers) {
     if (!await confirm({
       title: `${t('ปิดบัญชี')} ${caretaker.name}?`,
       description: t('บัญชีนี้จะเข้าสู่ระบบไม่ได้ แต่ข้อมูลเดิมจะยังถูกเก็บไว้'),
@@ -325,7 +332,7 @@ export default function AdminPage() {
                         dateStyle: 'medium',
                         timeStyle: 'short',
                         timeZone: 'Asia/Bangkok',
-                      }).format(new Date(log.used_at))}
+                      }).format(parseBangkokTimestamp(log.used_at))}
                     </td>
                     <td className="px-4 py-3 font-medium">{log.caretaker_name}</td>
                     <td className="px-4 py-3">{log.caretaker_role === 'admin' ? t('Admin') : t('ผู้ดูแล')}</td>

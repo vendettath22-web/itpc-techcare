@@ -7,64 +7,69 @@ function safeFilename(filename: string): string {
   return filename.replace(/[<>:"/\\|?*]/g, '_').replace(/\s+/g, '-');
 }
 
-export async function downloadThaiPdf(title: string, content: string, filename: string): Promise<void> {
+export function downloadPdfBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `${safeFilename(filename)}.pdf`;
+  link.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+export async function createThaiPdfBlob(title: string, content: string): Promise<Blob> {
   const report = document.createElement('div');
   report.style.cssText = 'position:fixed;left:0;top:0;width:794px;background:#ffffff;opacity:0;pointer-events:none;z-index:-1;';
   report.innerHTML = `
     <style>
-      .pdf-report { box-sizing:border-box; width:794px; padding:38px 44px; color:#302638; background:#fff; font:16px/1.65 Tahoma,"Leelawadee UI","Noto Sans Thai",sans-serif; }
+      .pdf-report { box-sizing:border-box; display:flex; min-height:1060px; flex-direction:column; width:794px; padding:4px 26px 18px; color:#302638; background:#fff; font:12.5px/1.35 Tahoma,"Leelawadee UI","Noto Sans Thai",sans-serif; }
       .pdf-report * { box-sizing:border-box; }
-      .pdf-brand { display:flex; align-items:center; justify-content:space-between; gap:24px; padding:0 0 20px; border-bottom:3px solid #70418a; }
-      .pdf-brand img { display:block; width:210px; height:auto; }
-      .pdf-brand-note { color:#785d85; font-size:13px; font-weight:600; }
-      .pdf-report h1 { margin:25px 0 6px; color:#432753; font-size:26px; line-height:1.35; }
-      .pdf-report h2 { margin:25px 0 11px; padding:10px 14px; border-left:5px solid #9a6bb0; border-radius:0 9px 9px 0; background:#f3edf7; color:#57356b; font-size:19px; line-height:1.4; }
-      .pdf-report h3 { margin:16px 0 8px; color:#654579; font-size:16px; }
-      .pdf-report p { margin:6px 0; overflow-wrap:anywhere; }
-      .pdf-muted { color:#756b7b; font-size:13px; }
-      .pdf-card { margin:12px 0; padding:16px 18px; border:1px solid #e8dfed; border-radius:12px; background:#fff; }
+      .pdf-brand { display:flex; align-items:center; justify-content:space-between; gap:18px; padding:0 0 5px; border-bottom:2px solid #70418a; }
+      .pdf-brand img { display:block; width:165px; height:auto; }
+      .pdf-report h1 { margin:7px 0 2px; color:#432753; font-size:21px; font-weight:700; line-height:1.3; }
+      .pdf-report h2 { margin:8px 0 5px; padding:6px 9px; border-left:4px solid #9a6bb0; border-radius:0 7px 7px 0; background:#f3edf7; color:#57356b; font-size:15px; font-weight:700; line-height:1.35; }
+      .pdf-report h3 { margin:5px 0 3px; color:#654579; font-size:14px; font-weight:700; }
+      .pdf-report p { margin:3px 0; overflow-wrap:anywhere; }
+      .pdf-muted { color:#756b7b; font-size:10px; }
+      .pdf-card { margin:6px 0; padding:7px 9px; border:1px solid #e8dfed; border-radius:8px; background:#fff; }
       .pdf-card:nth-of-type(even) { background:#fcfaff; }
       .pdf-record { margin:10px 0; padding:12px 16px; border-left:3px solid #c9afd8; border-radius:0 8px 8px 0; background:#faf7fc; }
       .pdf-report b { color:#4e395a; }
-      .pdf-status { display:inline-block; padding:3px 10px; border-radius:999px; font-size:13px; font-weight:700; }
+      .pdf-status { display:inline-block; padding:2px 7px; border-radius:999px; font-size:10px; font-weight:700; }
       .pdf-status-done { color:#276749; background:#e4f4e9; }
       .pdf-status-planned { color:#985b20; background:#fff0d9; }
-      .pdf-signature-card { display:flex; align-items:center; justify-content:space-between; gap:20px; break-inside:avoid; }
-      .pdf-signature { max-width:220px; max-height:90px; object-fit:contain; }
-      .pdf-student-profile { display:flex; align-items:center; gap:20px; margin:22px 0 18px; padding:20px; border:1px solid #e8dfed; border-radius:16px; background:linear-gradient(120deg,#faf7fc,#fff); }
-      .pdf-student-photo { display:block; width:82px; height:82px; flex:none; padding:3px; border:1px solid #e8dfed; border-radius:14px; background:#fff; object-fit:contain; object-position:center; }
+      .pdf-signature-card { display:flex; justify-content:flex-end; margin:6px 0; padding:8px 10px; break-inside:avoid; page-break-inside:avoid; }
+      .pdf-signature-block { display:flex; width:270px; min-height:130px; flex-direction:column; align-items:center; justify-content:flex-end; text-align:center; }
+      .pdf-signature { display:block; width:210px; height:64px; max-width:100%; margin:0 auto -4px; object-fit:contain; object-position:center bottom; }
+      .pdf-signature-name { width:100%; padding-top:5px; border-top:1px solid #6c6470; font-size:12px; overflow-wrap:anywhere; }
+      .pdf-signature-role,.pdf-signature-date { color:#756b7b; font-size:11px; overflow-wrap:anywhere; }
+      .pdf-student-profile { display:flex; align-items:center; gap:14px; margin:6px 0 7px; padding:7px 9px; border:1px solid #e8dfed; border-radius:9px; background:linear-gradient(120deg,#faf7fc,#fff); }
+      .pdf-student-photo { display:block; width:66px; height:66px; flex:none; padding:3px; border:1px solid #e8dfed; border-radius:8px; background:#fff; object-fit:contain; object-position:center; }
       .pdf-student-heading { min-width:0; flex:1; }
-      .pdf-student-kicker { margin:0 0 4px!important; color:#806691; font-size:12px; font-weight:700; letter-spacing:.04em; }
-      .pdf-report h2.pdf-student-name { margin:0!important; padding:0; border:0; border-radius:0; background:none; color:#35223f; font-size:24px; line-height:1.35; }
-      .pdf-student-subtitle { margin:6px 0 0!important; color:#756b7b; font-size:13px; }
-      .pdf-student-count { min-width:78px; padding:10px 12px; border-radius:12px; background:#f0e8f5; color:#70418a; text-align:center; }
-      .pdf-student-count strong { display:block; font-size:24px; line-height:1.2; }
-      .pdf-student-count span { display:block; margin-top:3px; font-size:11px; font-weight:600; }
-      .pdf-report h2.pdf-section-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:25px 0 11px; padding:10px 14px; border-left:5px solid #9a6bb0; border-radius:0 9px 9px 0; background:#f3edf7; color:#57356b; font-size:18px; line-height:1.4; }
-      .pdf-info-grid { display:flex; flex-wrap:wrap; gap:1px; overflow:hidden; border:1px solid #e8dfed; border-radius:12px; background:#e8dfed; }
-      .pdf-info-item { width:calc(50% - .5px); min-height:56px; flex-grow:1; padding:10px 14px; background:#fff; }
-      .pdf-info-item span { display:block; margin-bottom:3px; color:#756b7b; font-size:11px; }
-      .pdf-info-item strong { display:block; color:#35223f; font-size:14px; font-weight:600; overflow-wrap:anywhere; }
-      .pdf-case-card { margin:12px 0; padding:16px 18px; border:1px solid #e8dfed; border-radius:13px; background:#fff; }
-      .pdf-case-header { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; padding-bottom:11px; border-bottom:1px solid #eee8f1; }
-      .pdf-report h3.pdf-case-title { margin:0!important; color:#432753; font-size:17px; }
-      .pdf-case-date { margin:4px 0 0!important; color:#756b7b; font-size:12px; }
-      .pdf-case-details { display:flex; flex-wrap:wrap; column-gap:18px; row-gap:7px; padding:10px 0; }
-      .pdf-case-details p { width:calc(50% - 9px); }
-      .pdf-case-details p.pdf-full-width { width:100%; }
-      .pdf-case-details p { margin:0; font-size:13px; }
-      .pdf-case-description { margin:0!important; padding:10px 12px; border-radius:8px; background:#faf8fc; white-space:pre-wrap; font-size:13px; }
-      .pdf-case-section-title { margin:14px 0 7px!important; color:#654579; font-size:14px!important; }
-      .pdf-update { margin:8px 0; padding:10px 13px; border-left:3px solid #c9afd8; border-radius:0 8px 8px 0; background:#faf7fc; }
-      .pdf-update p { margin:3px 0; font-size:12px; }
-      .pdf-empty { margin:12px 0; padding:16px; border:1px dashed #d9cbe1; border-radius:10px; background:#fcfaff; color:#756b7b; text-align:center; font-size:13px; }
-      .pdf-count-badge { flex:none; padding:3px 9px; border-radius:999px; background:#fff; color:#70418a; font-size:12px; }
+      .pdf-student-kicker { margin:0 0 3px!important; color:#806691; font-size:15px; font-weight:700; letter-spacing:.03em; }
+      .pdf-student-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); overflow:hidden; border:1px solid #e8dfed; border-radius:6px; background:#e8dfed; gap:1px; }
+      .pdf-info-item { min-width:0; padding:4px 6px; background:#fff; }
+      .pdf-info-item-wide { grid-column:span 2; }
+      .pdf-info-item span { display:block; color:#756b7b; font-size:9px; line-height:1.25; }
+      .pdf-info-item strong { display:block; color:#35223f; font-size:12px; font-weight:600; line-height:1.3; overflow-wrap:anywhere; }
+      .pdf-report h2.pdf-section-heading { display:flex; align-items:center; justify-content:space-between; gap:10px; margin:8px 0 5px; padding:6px 9px; border-left:4px solid #9a6bb0; border-radius:0 7px 7px 0; background:#f3edf7; color:#57356b; font-size:15px; font-weight:700; line-height:1.35; }
+      .pdf-case-card { display:flex; flex:1 0 auto; flex-direction:column; justify-content:space-between; margin:4px 0; padding:6px 8px; border:1px solid #e8dfed; border-radius:8px; background:#fff; }
+      .pdf-case-header { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; padding-bottom:4px; border-bottom:1px solid #eee8f1; }
+      .pdf-report h3.pdf-case-title { margin:0!important; color:#432753; font-size:13px; font-weight:700; }
+      .pdf-case-date { margin:2px 0 0!important; color:#756b7b; font-size:11px; }
+      .pdf-case-details { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:2px 12px; padding:4px 0; }
+      .pdf-case-details p { min-width:0; }
+      .pdf-case-details p.pdf-full-width { grid-column:1 / -1; }
+      .pdf-case-details p { margin:0; font-size:12px; }
+      .pdf-case-description { margin:0!important; padding:4px 6px; border-radius:6px; background:#faf8fc; white-space:pre-wrap; font-size:12px; }
+      .pdf-case-section-title { margin:4px 0 2px!important; color:#654579; font-size:14px!important; font-weight:700; }
+      .pdf-update { margin:3px 0; padding:4px 6px; border-left:2px solid #c9afd8; border-radius:0 6px 6px 0; background:#faf7fc; }
+      .pdf-update p { margin:1px 0; font-size:12px; }
+      .pdf-empty { margin:6px 0; padding:8px; border:1px dashed #d9cbe1; border-radius:7px; background:#fcfaff; color:#756b7b; text-align:center; font-size:12px; }
       @media print { .pdf-card,.pdf-record { break-inside:avoid; } }
     </style>
     <article class="pdf-report">
       <header class="pdf-brand">
         <img src="${LOGO_PATH}" alt="ITPC Takecare">
-        <span class="pdf-brand-note">ระบบช่วยเหลือดูแลนักเรียน</span>
       </header>
       <h1>${title}</h1>
       ${content}
@@ -97,39 +102,23 @@ export async function downloadThaiPdf(title: string, content: string, filename: 
       format: 'a4',
       compress: true,
     });
-    const pageCanvas = document.createElement('canvas');
-    pageCanvas.width = canvas.width;
-    const pagePixelHeight = Math.floor((canvas.width * pageHeight) / pageWidth);
-    const context = pageCanvas.getContext('2d');
-    if (!context) throw new Error('ไม่สามารถจัดหน้า PDF ได้');
-
-    for (let offsetY = 0; offsetY < canvas.height; offsetY += pagePixelHeight) {
-      const sliceHeight = Math.min(pagePixelHeight, canvas.height - offsetY);
-      pageCanvas.height = sliceHeight;
-      context.clearRect(0, 0, pageCanvas.width, pageCanvas.height);
-      context.drawImage(
-        canvas,
-        0,
-        offsetY,
-        canvas.width,
-        sliceHeight,
-        0,
-        0,
-        pageCanvas.width,
-        sliceHeight,
-      );
-      if (offsetY > 0) pdf.addPage();
-      pdf.addImage(
-        pageCanvas.toDataURL('image/jpeg', 0.94),
-        'JPEG',
-        0,
-        0,
-        pageWidth,
-        (sliceHeight / canvas.width) * pageWidth,
-      );
-    }
-    pdf.save(`${safeFilename(filename)}.pdf`);
+    const fitScale = Math.min(pageWidth / canvas.width, pageHeight / canvas.height);
+    const imageWidth = canvas.width * fitScale;
+    const imageHeight = canvas.height * fitScale;
+    pdf.addImage(
+      canvas.toDataURL('image/jpeg', 0.94),
+      'JPEG',
+      (pageWidth - imageWidth) / 2,
+      8,
+      imageWidth,
+      imageHeight,
+    );
+    return pdf.output('blob');
   } finally {
     report.remove();
   }
+}
+
+export async function downloadThaiPdf(title: string, content: string, filename: string): Promise<void> {
+  downloadPdfBlob(await createThaiPdfBlob(title, content), filename);
 }
