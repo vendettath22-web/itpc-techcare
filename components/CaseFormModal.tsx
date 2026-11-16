@@ -1,15 +1,18 @@
 'use client';
 
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
-import { Search, X } from 'lucide-react';
+import { Brain, Eye, HandHeart, MessageCircle, Sparkles, UsersRound, Search, X } from 'lucide-react';
 import { useConfirmDialog } from '@/components/ConfirmDialog';
 import { useLanguage } from '@/lib/language';
 import { requestApi } from '@/lib/api';
 import { studentName } from '@/lib/cases';
+import { CASE_SERVICES, type CaseServiceType } from '@/lib/case-services';
 import { useSessionCaretaker } from '@/lib/session';
 import type { itpc_takecare_caretakers, itpc_takecare_cases, itpc_takecare_students } from '@/types/database';
 
 type Props = { onClose: () => void; onSaved: () => void; caseToEdit?: itpc_takecare_cases };
+
+const serviceIcons = [UsersRound, MessageCircle, Eye, HandHeart, Brain, Sparkles, Sparkles] as const;
 
 export default function CaseFormModal({ onClose, onSaved, caseToEdit }: Props) {
   const [students, setStudents] = useState<itpc_takecare_students[]>([]);
@@ -22,6 +25,7 @@ export default function CaseFormModal({ onClose, onSaved, caseToEdit }: Props) {
   const [gradeFilter, setGradeFilter] = useState('');
   const [roomFilter, setRoomFilter] = useState('');
   const [caseType, setCaseType] = useState<'low_confidence' | 'feel_not_smart' | 'other'>(caseToEdit?.case_type ?? 'low_confidence');
+  const [serviceType, setServiceType] = useState<CaseServiceType | null>(caseToEdit?.service_type ?? null);
   const [otherText, setOtherText] = useState(caseToEdit?.other_text ?? '');
   const [details, setDetails] = useState(caseToEdit?.details ?? '');
   const [scheduledAt, setScheduledAt] = useState(() => {
@@ -123,6 +127,10 @@ export default function CaseFormModal({ onClose, onSaved, caseToEdit }: Props) {
       setError('กรุณาเลือกนักเรียนอย่างน้อย 1 คน');
       return;
     }
+    if (!serviceType) {
+      setError('กรุณาเลือกบริการที่ต้องการ');
+      return;
+    }
     if (!selectedCaretakers.length) {
       setError('กรุณาเลือกผู้ดูแลที่รับผิดชอบอย่างน้อย 1 คน');
       return;
@@ -142,6 +150,7 @@ export default function CaseFormModal({ onClose, onSaved, caseToEdit }: Props) {
         await requestApi<null>('updateCase', {
           caseId: caseToEdit.id,
           caseType,
+          serviceType,
           otherText: caseType === 'other' ? otherText.trim() : null,
           details: details.trim() || null,
           scheduledAt: new Date(scheduledAt).toISOString(),
@@ -151,6 +160,7 @@ export default function CaseFormModal({ onClose, onSaved, caseToEdit }: Props) {
       } else {
         await requestApi<null>('createCase', {
           caseType,
+          serviceType,
           otherText: caseType === 'other' ? otherText.trim() : null,
           details: details.trim() || null,
           scheduledAt: new Date(scheduledAt).toISOString(),
@@ -216,6 +226,35 @@ export default function CaseFormModal({ onClose, onSaved, caseToEdit }: Props) {
               </div>
               {selectedStudents.length > 0 && <div className="mt-2 flex flex-wrap gap-2">{selectedStudents.map((student) => <span key={student.id} className="flex items-center gap-1 rounded-full bg-primary-light px-3 py-1 text-xs text-primary">{studentName(student)}<button type="button" onClick={() => toggleStudent(student)} aria-label={`นำ ${studentName(student)} ออก`}><X size={13} /></button></span>)}</div>}
             </div>
+            <section aria-labelledby="case-service-title" className="rounded-2xl border border-primary/15 bg-[#fcfbfd] p-4 sm:p-5">
+              <div className="mb-3 flex items-start justify-between gap-3">
+                <div>
+                  <h3 id="case-service-title" className="text-sm font-bold text-gray-800">{t('เลือกรูปแบบบริการ')} <span className="text-red-500">*</span></h3>
+                  <p className="mt-1 text-xs text-gray-500">{t('เลือกบริการที่ต้องการดำเนินการสำหรับเคสนี้')}</p>
+                </div>
+                <span className="shrink-0 rounded-full bg-white px-2.5 py-1 text-xs font-medium text-primary ring-1 ring-primary/15">{t('เลือก 1 รายการ')}</span>
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {CASE_SERVICES.map((service, index) => {
+                  const Icon = serviceIcons[index];
+                  const selected = serviceType === service.value;
+                  return <button
+                    key={service.value}
+                    type="button"
+                    aria-pressed={selected}
+                    onClick={() => { setServiceType(service.value); setError(''); }}
+                    className={`flex min-h-[88px] items-start gap-3 rounded-xl border p-3 text-left transition-colors ${selected ? 'border-primary bg-primary-light/60 ring-2 ring-primary/20' : 'border-gray-200 bg-white hover:border-primary/40 hover:bg-primary-light/20'}`}
+                  >
+                    <span className={`mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-lg ${selected ? 'bg-primary text-white' : 'bg-[#f3eff6] text-primary'}`}><Icon size={18} /></span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-sm font-semibold leading-snug text-gray-800">{t(service.label)}</span>
+                      <span className="mt-1 block text-xs leading-relaxed text-gray-500">{t(service.description)}</span>
+                    </span>
+                    {selected && <span className="mt-1 size-2 shrink-0 rounded-full bg-primary" aria-hidden="true" />}
+                  </button>;
+                })}
+              </div>
+            </section>
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
                 <label htmlFor="case-type" className="mb-2 block text-sm font-semibold">{t('ประเภทเคส')}</label>

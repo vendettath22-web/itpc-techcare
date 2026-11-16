@@ -8,7 +8,7 @@ import * as XLSX from 'xlsx';
 import Navbar from '@/components/Navbar';
 import CaseFormModal from '@/components/CaseFormModal';
 import CaseDetailModal from '@/components/CaseDetailModal';
-import { fetchCases, caseTypeName } from '@/lib/cases';
+import { appointmentStatusName, fetchCases, caseServiceTypeName, caseTypeName } from '@/lib/cases';
 import { useCurrentDateKey, useSessionCaretaker } from '@/lib/session';
 import { useLanguage } from '@/lib/language';
 import type { itpc_takecare_cases } from '@/types/database';
@@ -76,15 +76,18 @@ export default function Home() {
         [t('ผู้ส่งออก'), user?.name ?? '-'],
         [t('ขอบเขตข้อมูล'), t(showAll ? 'เคสทั้งหมดที่มีสิทธิ์เข้าถึง' : 'เคสที่ผู้ดูแลรับผิดชอบ')],
         [t('จำนวนเคสในเดือน'), monthCases.length],
-        [t('นัดหมายแล้ว'), monthCases.filter((item) => item.status !== 'done').length],
-        [t('เสร็จสิ้น'), monthCases.filter((item) => item.status === 'done').length],
+        [t('นัดหมายแล้ว'), monthCases.filter((item) => item.appointment_status === 'scheduled' || item.appointment_status === 'rescheduled').length],
+        [t('มาตามนัด'), monthCases.filter((item) => item.appointment_status === 'attended').length],
+        [t('ไม่มาตามนัด'), monthCases.filter((item) => item.appointment_status === 'no_show').length],
         [t('จัดทำเมื่อ'), createdAt],
       ]);
       const caseRows = monthCases.map((item) => ({
         [t('วันนัดหมาย')]: format(new Date(item.scheduled_at), 'dd/MM/yyyy'),
         [t('เวลา')]: format(new Date(item.scheduled_at), 'HH:mm'),
         [t('ประเภทเคส')]: t(caseTypeName(item)),
-        [t('สถานะ')]: t(item.status === 'done' ? 'เสร็จสิ้น' : 'นัดหมายแล้ว'),
+        [t('บริการ')]: t(caseServiceTypeName(item.service_type)),
+        [t('สถานะนัดหมาย')]: t(appointmentStatusName(item.appointment_status)),
+        [t('สถานะบริการ')]: t(item.status === 'done' ? 'เสร็จสิ้น' : 'ยังไม่เสร็จสิ้น'),
         [t('รายละเอียด')]: item.details || '',
         [t('นักเรียน')]: item.students?.map((student) => `${student.first_name_th ?? ''} ${student.last_name_th ?? ''}`.trim() || t('ไม่ระบุชื่อ')).join(', ') || '-',
         [t('รหัสนักเรียน')]: item.students?.map((student) => student.student_id || '-').join(', ') || '-',
@@ -97,13 +100,14 @@ export default function Home() {
         [t('วันนัดหมาย')]: format(new Date(item.scheduled_at), 'dd/MM/yyyy'),
         [t('เวลา')]: format(new Date(item.scheduled_at), 'HH:mm'),
         [t('ประเภทเคส')]: t(caseTypeName(item)),
+        [t('บริการ')]: t(caseServiceTypeName(item.service_type)),
         [t('ชื่อนักเรียน')]: [student.first_name_th, student.last_name_th].filter(Boolean).join(' ') || t('ไม่ระบุชื่อ'),
         [t('ชื่อเล่น')]: student.nickname_th || '-',
         [t('รหัสนักเรียน')]: student.student_id || '-',
         [t('ระดับชั้น')]: student.grade || '-',
         [t('ห้อง')]: student.room ?? '-',
         [t('ปีการศึกษา')]: student.academic_year,
-        [t('สถานะเคส')]: t(item.status === 'done' ? 'เสร็จสิ้น' : 'นัดหมายแล้ว'),
+        [t('สถานะนัดหมาย')]: t(appointmentStatusName(item.appointment_status)),
       })));
 
       const summarySheet = summary;
@@ -112,15 +116,15 @@ export default function Home() {
       summarySheet['!cols'] = [{ wch: 26 }, { wch: 42 }];
       summarySheet['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 1 } }];
       casesSheet['!cols'] = [
-        { wch: 16 }, { wch: 10 }, { wch: 25 }, { wch: 16 }, { wch: 44 },
+        { wch: 16 }, { wch: 10 }, { wch: 25 }, { wch: 28 }, { wch: 20 }, { wch: 20 }, { wch: 44 },
         { wch: 34 }, { wch: 22 }, { wch: 16 }, { wch: 30 }, { wch: 24 }, { wch: 20 },
       ];
       studentsSheet['!cols'] = [
-        { wch: 16 }, { wch: 10 }, { wch: 25 }, { wch: 30 }, { wch: 20 },
+        { wch: 16 }, { wch: 10 }, { wch: 25 }, { wch: 28 }, { wch: 30 }, { wch: 20 },
         { wch: 18 }, { wch: 16 }, { wch: 10 }, { wch: 16 }, { wch: 18 },
       ];
-      if (caseRows.length) casesSheet['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: caseRows.length, c: 10 } }) };
-      if (studentRows.length) studentsSheet['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: studentRows.length, c: 9 } }) };
+      if (caseRows.length) casesSheet['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: caseRows.length, c: 12 } }) };
+      if (studentRows.length) studentsSheet['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: studentRows.length, c: 10 } }) };
       XLSX.utils.book_append_sheet(workbook, summarySheet, t('สรุป'));
       XLSX.utils.book_append_sheet(workbook, casesSheet, t('รายการเคส'));
       XLSX.utils.book_append_sheet(workbook, studentsSheet, t('นักเรียน'));
@@ -156,11 +160,12 @@ export default function Home() {
             {t('แสดงเคสทั้งหมด')}
           </label>
         </div>
-        <div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {[
-            { label: t('เคสที่แสดง'), value: visibleCases.length, icon: CalendarDays, color: 'bg-[#f2eaf7] text-primary' },
-            { label: t('นัดหมายแล้ว'), value: visibleCases.filter((item) => item.status !== 'done').length, icon: Clock3, color: 'bg-[#fff1e8] text-[#b5673d]' },
-            { label: t('เสร็จสิ้น'), value: visibleCases.filter((item) => item.status === 'done').length, icon: CheckCircle2, color: 'bg-[#eaf4e8] text-[#4d8053]' },
+            { label: t('นัดหมายแล้ว'), value: visibleCases.filter((item) => item.appointment_status === 'scheduled' || item.appointment_status === 'rescheduled').length, icon: Clock3, color: 'bg-[#fff1e8] text-[#b5673d]' },
+            { label: t('มาตามนัด'), value: visibleCases.filter((item) => item.appointment_status === 'attended').length, icon: CheckCircle2, color: 'bg-[#eaf4e8] text-[#4d8053]' },
+            { label: t('ไม่มาตามนัด'), value: visibleCases.filter((item) => item.appointment_status === 'no_show').length, icon: CalendarDays, color: 'bg-[#fff0f0] text-[#b34d4d]' },
+            { label: t('เสร็จสิ้น'), value: visibleCases.filter((item) => item.status === 'done').length, icon: CheckCircle2, color: 'bg-[#f2eaf7] text-primary' },
           ].map(({ label, value, icon: Icon, color }) => (
             <div key={label} className="flex items-center gap-3 rounded-2xl border border-[#eee8f1] bg-white px-4 py-3.5 shadow-[0_4px_14px_rgba(49,31,59,0.035)]">
               <span className={`grid h-10 w-10 place-items-center rounded-xl ${color}`}><Icon size={19} /></span>
@@ -193,15 +198,15 @@ export default function Home() {
               return <div key={dayKey(date)} className={`min-h-20 border-b border-r border-[#f0edf2] p-1.5 transition-colors hover:bg-[#fcfaff] sm:min-h-28 sm:p-2 ${!isSameMonth(date, month) ? 'bg-[#faf9fb]' : ''}`}>
                 <span className={`grid h-7 w-7 place-items-center rounded-full text-xs font-semibold ${dayKey(date) === todayKey ? 'bg-primary text-white shadow-sm' : isSameMonth(date, month) ? 'text-gray-700' : 'text-gray-300'}`}>{format(date, 'd')}</span>
                 <div className="mt-1.5 space-y-1">
-                  {daysCases.slice(0, 3).map((item) => <button key={item.id} onClick={() => setSelectedCase(item)} title={`${caseTypeName(item)} - ${(item.students ?? []).map((student) => student.first_name_th).join(', ')}`} className={`block w-full truncate rounded-md px-1.5 py-1 text-left text-[10px] leading-tight sm:text-xs ${item.status === 'done' ? 'bg-pastel-mint text-[#38583c]' : 'bg-pastel-peach text-[#80533b]'}`}>
-                    {format(new Date(item.scheduled_at), 'HH:mm')} {caseTypeName(item)}
+                  {daysCases.slice(0, 3).map((item) => <button key={item.id} onClick={() => setSelectedCase(item)} title={`${caseTypeName(item)} · ${caseServiceTypeName(item.service_type)} · ${appointmentStatusName(item.appointment_status)} - ${(item.students ?? []).map((student) => student.first_name_th).join(', ')}`} className={`block w-full truncate rounded-md px-1.5 py-1 text-left text-[10px] leading-tight sm:text-xs ${item.appointment_status === 'attended' ? 'bg-pastel-mint text-[#38583c]' : item.appointment_status === 'no_show' ? 'bg-[#fde8e8] text-[#8e3636]' : item.appointment_status === 'rescheduled' ? 'bg-[#e8f0fd] text-[#345d94]' : 'bg-pastel-peach text-[#80533b]'}`}>
+                    {format(new Date(item.scheduled_at), 'HH:mm')} {caseServiceTypeName(item.service_type)}
                   </button>)}
                   {daysCases.length > 3 && <p className="pl-1 text-[10px] text-gray-500">{language === 'th' ? `อีก ${daysCases.length - 3} เคส` : `${daysCases.length - 3} more`}</p>}
                 </div>
               </div>;
             })}
           </div>
-          <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 px-1 text-xs text-gray-500"><span className="flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-full bg-pastel-peach" />{t('นัดหมายแล้ว')}</span><span className="flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-full bg-pastel-mint" />{t('เสร็จสิ้น')}</span><span className="ml-auto rounded-full bg-[#f7f3f9] px-3 py-1 font-semibold text-[#594563]">{visibleCases.length} {language === 'th' ? 'เคส' : 'cases'}</span></div>
+          <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 px-1 text-xs text-gray-500"><span className="flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-full bg-pastel-peach" />{t('นัดหมายแล้ว')}</span><span className="flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-full bg-pastel-mint" />{t('มาตามนัด')}</span><span className="flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-full bg-[#fde8e8]" />{t('ไม่มาตามนัด')}</span><span className="flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-full bg-[#e8f0fd]" />{t('เลื่อนนัด')}</span><span className="ml-auto rounded-full bg-[#f7f3f9] px-3 py-1 font-semibold text-[#594563]">{visibleCases.length} {language === 'th' ? 'เคส' : 'cases'}</span></div>
         </div>
       </section>
       <button aria-label={t('สร้างเคสใหม่')} onClick={() => setShowForm(true)} className="fixed bottom-6 right-6 z-30 grid h-14 w-14 place-items-center rounded-2xl bg-primary text-white shadow-[0_10px_26px_rgba(112,65,138,0.35)] transition hover:-translate-y-1 hover:bg-primary-hover sm:bottom-8 sm:right-8"><Plus size={27} /></button>

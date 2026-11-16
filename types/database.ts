@@ -1,3 +1,8 @@
+import type { CaseServiceType } from '@/lib/case-services';
+import type { CaseServiceFormData } from '@/lib/case-service-forms';
+
+export type AppointmentStatus = 'scheduled' | 'attended' | 'no_show' | 'rescheduled';
+
 export interface itpc_takecare_caretakers {
   id: string;
   name: string;
@@ -30,6 +35,8 @@ export interface itpc_takecare_students {
 export interface itpc_takecare_cases {
   id: string;
   case_type: 'low_confidence' | 'feel_not_smart' | 'other';
+  service_type: CaseServiceType | null;
+  appointment_status: AppointmentStatus;
   other_text: string | null;
   details: string | null;
   scheduled_at: string;
@@ -40,6 +47,14 @@ export interface itpc_takecare_cases {
   updated_at: string;
   students?: itpc_takecare_students[];
   caretakers?: itpc_takecare_caretakers[];
+}
+
+export interface itpc_takecare_case_service_forms {
+  case_id: string;
+  service_type: CaseServiceType;
+  form_data: CaseServiceFormData;
+  recorded_by: string;
+  updated_at: string;
 }
 
 export interface itpc_takecare_case_updates {

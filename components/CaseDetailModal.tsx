@@ -6,12 +6,14 @@ import { Download, Eraser, FileText, Pencil, Trash2, Upload, X } from 'lucide-re
 import { useConfirmDialog } from '@/components/ConfirmDialog';
 import { useLanguage } from '@/lib/language';
 import { requestApi } from '@/lib/api';
-import { caseTypeName, formatThaiDate, studentName } from '@/lib/cases';
+import { appointmentStatusName, caseServiceTypeName, caseTypeName, formatThaiDate, studentName } from '@/lib/cases';
+import CaseServiceForm from '@/components/CaseServiceForm';
+import { CASE_SERVICE_FORM_SECTIONS, type CaseServiceFormData } from '@/lib/case-service-forms';
 import { escapeHtml, useSessionCaretaker } from '@/lib/session';
 import { prepareProfilePhoto } from '@/lib/profile-image';
 import { createStudentReportDocument } from '@/lib/student-report';
 import CaseFormModal from '@/components/CaseFormModal';
-import type { itpc_takecare_cases, itpc_takecare_case_signatures, itpc_takecare_case_updates } from '@/types/database';
+import type { AppointmentStatus, itpc_takecare_cases, itpc_takecare_case_service_forms, itpc_takecare_case_signatures, itpc_takecare_case_updates } from '@/types/database';
 
 type Props = { caseItem: itpc_takecare_cases; onClose: () => void; onUpdated: () => void };
 
@@ -20,6 +22,15 @@ export default function CaseDetailModal({ caseItem, onClose, onUpdated }: Props)
   const [signatures, setSignatures] = useState<itpc_takecare_case_signatures[]>([]);
   const [caretakerNames, setCaretakerNames] = useState<Record<string, string>>({});
   const [status, setStatus] = useState(caseItem.status);
+  const [appointmentStatus, setAppointmentStatus] = useState<AppointmentStatus>(caseItem.appointment_status);
+  const [appointmentDate, setAppointmentDate] = useState(caseItem.scheduled_at);
+  const [rescheduledAt, setRescheduledAt] = useState(() => {
+    const date = new Date(caseItem.scheduled_at);
+    date.setTime(date.getTime() - date.getTimezoneOffset() * 60000);
+    return date.toISOString().slice(0, 16);
+  });
+  const [serviceFormData, setServiceFormData] = useState<CaseServiceFormData | null>(null);
+  const [serviceFormLoaded, setServiceFormLoaded] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [showUpdateForm, setShowUpdateForm] = useState(false);
@@ -29,6 +40,8 @@ export default function CaseDetailModal({ caseItem, onClose, onUpdated }: Props)
   const [nextStep, setNextStep] = useState('');
   const [markDone, setMarkDone] = useState(false);
   const [savingUpdate, setSavingUpdate] = useState(false);
+  const [savingAppointment, setSavingAppointment] = useState(false);
+  const [savingServiceForm, setSavingServiceForm] = useState(false);
   const [signerName, setSignerName] = useState('');
   const [signerRole, setSignerRole] = useState('');
   const [signatureImage, setSignatureImage] = useState('');
@@ -60,6 +73,7 @@ export default function CaseDetailModal({ caseItem, onClose, onUpdated }: Props)
           updates: itpc_takecare_case_updates[];
           signatures: itpc_takecare_case_signatures[];
           caretakers: { id: string; name: string }[];
+          serviceForm: itpc_takecare_case_service_forms | null;
         }>('caseDetails', { caseId: caseItem.id });
         if (!active) return;
         const names = Object.fromEntries(result.caretakers.map((caretaker) => [caretaker.id, caretaker.name]));
@@ -69,6 +83,8 @@ export default function CaseDetailModal({ caseItem, onClose, onUpdated }: Props)
           caretaker_name: names[item.caretaker_id] ?? t('ผู้ดูแล'),
         })));
         setSignatures(result.signatures);
+        setServiceFormData(result.serviceForm?.form_data ?? null);
+        setServiceFormLoaded(true);
       } catch (loadError) {
         if (!active) return;
         setError(`${t('โหลดประวัติเคสไม่สำเร็จ')}: ${loadError instanceof Error ? loadError.message : t('เกิดข้อผิดพลาดที่ไม่ทราบสาเหตุ')}`);
@@ -116,6 +132,47 @@ export default function CaseDetailModal({ caseItem, onClose, onUpdated }: Props)
       setError(`${t('เลือกรูปลายเซ็นไม่สำเร็จ')}: ${imageError instanceof Error ? imageError.message : t('เกิดข้อผิดพลาดที่ไม่ทราบสาเหตุ')}`);
     } finally {
       if (signatureFileRef.current) signatureFileRef.current.value = '';
+    }
+  }
+
+  async function saveAppointmentOutcome(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!user || (!isAssigned && user.role !== 'admin')) return;
+    if (appointmentStatus === 'rescheduled' && !rescheduledAt) {
+      setError(t('กรุณาระบุวันและเวลาใหม่'));
+      return;
+    }
+    setSavingAppointment(true);
+    setError('');
+    try {
+      await requestApi<null>('updateAppointmentOutcome', {
+        caseId: caseItem.id,
+        appointmentStatus,
+        ...(appointmentStatus === 'rescheduled' ? { scheduledAt: new Date(rescheduledAt).toISOString() } : {}),
+      });
+      if (appointmentStatus === 'rescheduled') {
+        const newDate = new Date(rescheduledAt);
+        setAppointmentDate(newDate.toISOString());
+      }
+      onUpdated();
+    } catch (saveError) {
+      setError(`${t('อัปเดตสถานะนัดหมายไม่สำเร็จ')}: ${saveError instanceof Error ? saveError.message : t('เกิดข้อผิดพลาดที่ไม่ทราบสาเหตุ')}`);
+    } finally {
+      setSavingAppointment(false);
+    }
+  }
+
+  async function saveServiceForm(formData: CaseServiceFormData) {
+    setSavingServiceForm(true);
+    setError('');
+    try {
+      await requestApi<null>('saveCaseServiceForm', { caseId: caseItem.id, formData });
+      setServiceFormData(formData);
+      onUpdated();
+    } catch (saveError) {
+      setError(`${t('บันทึกแบบฟอร์มบริการไม่สำเร็จ')}: ${saveError instanceof Error ? saveError.message : t('เกิดข้อผิดพลาดที่ไม่ทราบสาเหตุ')}`);
+    } finally {
+      setSavingServiceForm(false);
     }
   }
 
@@ -233,13 +290,26 @@ export default function CaseDetailModal({ caseItem, onClose, onUpdated }: Props)
     setExporting(true);
     setError('');
     try {
+      const serviceFormHtml = caseItem.service_type && serviceFormData
+        ? `<h2 class="pdf-section-heading">${escapeHtml(t('แบบฟอร์มบริการ'))} · ${escapeHtml(t(caseServiceTypeName(caseItem.service_type)))}</h2>${CASE_SERVICE_FORM_SECTIONS[caseItem.service_type].map((section) => {
+          const fields = section.fields.map((field) => {
+            const value = serviceFormData[field.id];
+            const displayValue = Array.isArray(value) ? value.join(', ') : value;
+            if (!displayValue) return '';
+            return `<p><b>${escapeHtml(t(field.label))}:</b> ${escapeHtml(displayValue)}</p>`;
+          }).join('');
+          return fields ? `<div class="pdf-card"><h3>${escapeHtml(t(section.title))}</h3>${fields}</div>` : '';
+        }).join('')}`
+        : '';
       const html = `<p class="pdf-muted">${escapeHtml(t('จัดทำเมื่อ'))} ${escapeHtml(formatThaiDate(new Date().toISOString()))}</p>
       <h2 class="pdf-section-heading">${escapeHtml(t('รายละเอียดเคส'))}</h2><div class="pdf-card">
       <p><b>${escapeHtml(t('ประเภท:'))}</b> ${escapeHtml(t(caseTypeName(caseItem)))}</p>
-      <p><b>${escapeHtml(t('สถานะ:'))}</b> <span class="pdf-status ${status === 'done' ? 'pdf-status-done' : 'pdf-status-planned'}">${escapeHtml(t(status === 'done' ? 'เสร็จสิ้น' : 'นัดหมายแล้ว'))}</span></p>
-      <p><b>${escapeHtml(t('วันนัดหมาย:'))}</b> ${escapeHtml(formatThaiDate(caseItem.scheduled_at))}</p>
+      <p><b>${escapeHtml(t('บริการ:'))}</b> ${escapeHtml(t(caseServiceTypeName(caseItem.service_type)))}</p>
+      <p><b>${escapeHtml(t('สถานะนัดหมาย:'))}</b> ${escapeHtml(t(appointmentStatusName(appointmentStatus)))}</p>
+      <p><b>${escapeHtml(t('สถานะบริการ:'))}</b> <span class="pdf-status ${status === 'done' ? 'pdf-status-done' : 'pdf-status-planned'}">${escapeHtml(t(status === 'done' ? 'เสร็จสิ้น' : 'ยังไม่เสร็จสิ้น'))}</span></p>
+      <p><b>${escapeHtml(t('วันนัดหมาย:'))}</b> ${escapeHtml(formatThaiDate(appointmentDate))}</p>
       <p><b>${escapeHtml(t('ผู้สร้าง:'))}</b> ${escapeHtml(caretakerNames[caseItem.created_by] ?? t('ผู้ดูแล'))}</p>
-      <p><b>${escapeHtml(t('รายละเอียด:'))}</b> ${escapeHtml(caseItem.details || '-')}</p></div>
+      <p><b>${escapeHtml(t('รายละเอียด:'))}</b> ${escapeHtml(caseItem.details || '-')}</p></div>${serviceFormHtml}
       <h2 class="pdf-section-heading">${escapeHtml(t('นักเรียน'))} (${(caseItem.students ?? []).length} ${escapeHtml(t('คน'))})</h2>${(caseItem.students ?? []).map((student) => `<div class="pdf-card"><p><b>${escapeHtml(t('ชื่อ:'))}</b> ${escapeHtml(studentName(student))}</p><p><b>${escapeHtml(t('ระดับชั้น:'))}</b> ${escapeHtml(student.grade ?? '-')}</p><p><b>${escapeHtml(t('ห้อง:'))}</b> ${escapeHtml(String(student.room ?? '-'))}</p></div>`).join('') || `<p class="pdf-empty">${escapeHtml(t('ไม่มีข้อมูลนักเรียน'))}</p>`}
       <h2 class="pdf-section-heading">${escapeHtml(t('ผู้ดูแลที่เกี่ยวข้อง'))} (${(caseItem.caretakers ?? []).length} ${escapeHtml(t('คน'))})</h2>${(caseItem.caretakers ?? []).map((caretaker) => `<div class="pdf-card"><p><b>${escapeHtml(t('ชื่อ:'))}</b> ${escapeHtml(caretaker.name)}</p></div>`).join('') || `<p class="pdf-empty">${escapeHtml(t('ไม่มีผู้ดูแลที่เกี่ยวข้อง'))}</p>`}
       <h2 class="pdf-section-heading">${escapeHtml(t('ประวัติการอัปเดต'))} (${updates.length} ${escapeHtml(t('รายการ'))})</h2>${updates.map((item) => `<div class="pdf-update"><p><b>${escapeHtml(t('ผู้บันทึก:'))}</b> ${escapeHtml(item.caretaker_name ?? t('ผู้ดูแล'))} · <b>${escapeHtml(t('วันเวลาที่บันทึก:'))}</b> ${escapeHtml(formatThaiDate(item.created_at))}</p><p><b>${escapeHtml(t('กิจกรรม:'))}</b> ${escapeHtml(item.activity_note)}</p><p><b>${escapeHtml(t('ผลลัพธ์:'))}</b> ${escapeHtml(item.result_note || '-')}</p><p><b>${escapeHtml(t('ขั้นตอนถัดไป:'))}</b> ${escapeHtml(item.next_step || '-')}</p></div>`).join('') || `<p class="pdf-empty">${escapeHtml(t('ยังไม่มีประวัติ'))}</p>`}
@@ -279,13 +349,45 @@ export default function CaseDetailModal({ caseItem, onClose, onUpdated }: Props)
           </div>
         </div>
         <div className="grid gap-3 rounded-2xl bg-[#faf8fb] p-4 sm:grid-cols-2">
-          <p><b>{t('สถานะ')}:</b> {t(status === 'done' ? 'เสร็จสิ้น' : 'นัดหมายแล้ว')}</p>
-          <p><b>{t('นัดหมาย')}:</b> {formatThaiDate(caseItem.scheduled_at)}</p>
+          <p><b>{t('สถานะนัดหมาย')}:</b> {t(appointmentStatusName(appointmentStatus))}</p>
+          <p><b>{t('นัดหมาย')}:</b> {formatThaiDate(appointmentDate)}</p>
+          <p><b>{t('สถานะบริการ')}:</b> {t(status === 'done' ? 'เสร็จสิ้น' : 'ยังไม่เสร็จสิ้น')}</p>
+          <p className="sm:col-span-2"><b>{t('บริการ')}:</b> {t(caseServiceTypeName(caseItem.service_type))}</p>
           <p className="sm:col-span-2"><b>{t('รายละเอียด')}:</b> {caseItem.details || t('ไม่มีรายละเอียด')}</p>
           <p className="sm:col-span-2"><b>{t('นักเรียน')}:</b> {(caseItem.students ?? []).map(studentName).join(', ') || t('ไม่ระบุ')}</p>
           <p className="sm:col-span-2"><b>{t('ผู้ดูแล')}:</b> {(caseItem.caretakers ?? []).map((caretaker) => caretaker.name).join(', ') || t('ไม่ระบุ')}</p>
         </div>
         {error && <p role="alert" className="mt-4 rounded-xl bg-red-50 p-3 text-sm text-red-700">{error}</p>}
+        {(isAssigned || user?.role === 'admin') && <form onSubmit={saveAppointmentOutcome} className="mt-4 rounded-2xl border border-[#eee8f1] bg-white p-4">
+          <h3 className="text-sm font-bold text-gray-800">{t('อัปเดตผลการนัดหมาย')}</h3>
+          <div className="mt-3 grid gap-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
+            <label className="block text-xs font-semibold text-gray-600">{t('สถานะนัดหมาย')}
+              <select value={appointmentStatus} onChange={(event) => setAppointmentStatus(event.target.value as AppointmentStatus)} className="mt-1 w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm text-gray-800">
+                {(['scheduled', 'attended', 'no_show', 'rescheduled'] as const).map((value) => <option key={value} value={value}>{t(appointmentStatusName(value))}</option>)}
+              </select>
+            </label>
+            {appointmentStatus === 'rescheduled' && <label className="block text-xs font-semibold text-gray-600">{t('วันและเวลาใหม่')}
+              <input type="datetime-local" required value={rescheduledAt} onChange={(event) => setRescheduledAt(event.target.value)} className="mt-1 w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm" />
+            </label>}
+            <button type="submit" disabled={savingAppointment} className="rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-hover disabled:opacity-60">
+              {savingAppointment ? t('กำลังบันทึก...') : t('บันทึกสถานะนัดหมาย')}
+            </button>
+          </div>
+        </form>}
+        {appointmentStatus === 'attended' && caseItem.service_type && (isAssigned || user?.role === 'admin') && serviceFormLoaded && <section className="mt-5">
+          <h3 className="font-bold text-gray-800">{t('แบบฟอร์มบริการ')} · {t(caseServiceTypeName(caseItem.service_type))}</h3>
+          <p className="mt-1 text-xs text-gray-500">{t('กรอกแบบบันทึกบริการหลังนักเรียนมาตามนัด ข้อมูลนักเรียนและวันนัดเชื่อมโยงจากเคสนี้')}</p>
+          <CaseServiceForm
+            key={`${caseItem.id}:${caseItem.service_type}`}
+            serviceType={caseItem.service_type}
+            scheduledAt={appointmentDate}
+            initialData={serviceFormData}
+            caretakers={caseItem.caretakers ?? []}
+            saving={savingServiceForm}
+            onSave={(formData) => void saveServiceForm(formData)}
+          />
+        </section>}
+        {appointmentStatus === 'attended' && !caseItem.service_type && <p className="mt-4 rounded-xl bg-amber-50 p-3 text-sm text-amber-800">{t('เคสนี้ยังไม่ได้ระบุบริการ จึงยังเปิดแบบฟอร์มบริการไม่ได้')}</p>}
         {loading ? <p className="py-8 text-center text-gray-500">{t('กำลังโหลดประวัติ...')}</p> : (
           <>
             <div className="mt-6 flex items-center justify-between gap-3"><h3 className="font-bold">{t('ประวัติการอัปเดต')}</h3>{isAssigned && !showUpdateForm && <button onClick={() => setShowUpdateForm(true)} className="rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white">{t('อัปเดตเคส')}</button>}</div>

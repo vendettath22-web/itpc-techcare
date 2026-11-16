@@ -7,7 +7,7 @@ import { ArrowLeft, Download, FileSpreadsheet, FileText, X } from 'lucide-react'
 import ImagePreview from '@/components/ImagePreview';
 import * as XLSX from 'xlsx';
 import Navbar from '@/components/Navbar';
-import { caseTypeName, fetchCases, formatThaiDate, studentGradeRoom, studentName } from '@/lib/cases';
+import { appointmentStatusName, caseServiceTypeName, caseTypeName, fetchCases, formatThaiDate, studentGradeRoom, studentName } from '@/lib/cases';
 import { escapeHtml, useSessionCaretaker } from '@/lib/session';
 import { createStudentReportDocument } from '@/lib/student-report';
 import { requestApi } from '@/lib/api';
@@ -107,10 +107,12 @@ export default function StudentHistory({ id }: { id: string }) {
           return `<article class="pdf-case-card">
             <header class="pdf-case-header">
               <div><h3 class="pdf-case-title">${escapeHtml(t(caseTypeName(caseItem)))}</h3><p class="pdf-case-date">${escapeHtml(t('วันนัดหมาย:'))} ${escapeHtml(formatThaiDate(caseItem.scheduled_at))}</p></div>
-              <span class="pdf-status ${caseItem.status === 'done' ? 'pdf-status-done' : 'pdf-status-planned'}">${escapeHtml(t(caseItem.status === 'done' ? 'เสร็จสิ้น' : 'นัดหมายแล้ว'))}</span>
+              <span class="pdf-status ${caseItem.appointment_status === 'attended' ? 'pdf-status-done' : 'pdf-status-planned'}">${escapeHtml(t(appointmentStatusName(caseItem.appointment_status)))}</span>
             </header>
             <div class="pdf-case-details">
               <p><b>${escapeHtml(t('วันที่สร้างเคส:'))}</b> ${escapeHtml(formatThaiDate(caseItem.created_at))}</p>
+              <p><b>${escapeHtml(t('สถานะบริการ:'))}</b> ${escapeHtml(t(caseItem.status === 'done' ? 'เสร็จสิ้น' : 'ยังไม่เสร็จสิ้น'))}</p>
+              <p><b>${escapeHtml(t('บริการ:'))}</b> ${escapeHtml(t(caseServiceTypeName(caseItem.service_type)))}</p>
               <p><b>${escapeHtml(t('ผู้สร้าง:'))}</b> ${escapeHtml(namesById[caseItem.created_by] || '-')}</p>
               <p class="pdf-full-width"><b>${escapeHtml(t('ผู้ดูแล:'))}</b> ${escapeHtml(caseItem.caretakers?.map((caretaker) => caretaker.name).join(', ') || '-')}</p>
             </div>
@@ -183,7 +185,9 @@ export default function StudentHistory({ id }: { id: string }) {
         [t('วันที่นัดหมาย')]: formatThaiDate(caseItem.scheduled_at),
         [t('วันที่สร้าง')]: formatThaiDate(caseItem.created_at),
         [t('ประเภทเคส')]: t(caseTypeName(caseItem)),
-        [t('สถานะ')]: t(caseItem.status === 'done' ? 'เสร็จสิ้น' : 'นัดหมายแล้ว'),
+        [t('บริการ')]: t(caseServiceTypeName(caseItem.service_type)),
+        [t('สถานะนัดหมาย')]: t(appointmentStatusName(caseItem.appointment_status)),
+        [t('สถานะบริการ')]: t(caseItem.status === 'done' ? 'เสร็จสิ้น' : 'ยังไม่เสร็จสิ้น'),
         [t('รายละเอียด')]: caseItem.details ?? '',
         [t('ผู้สร้าง')]: details.caretakers.find((caretaker) => caretaker.id === caseItem.created_by)?.name ?? '',
         [t('ผู้ดูแล')]: caseItem.caretakers?.map((caretaker) => caretaker.name).join(', ') ?? '',
@@ -241,7 +245,7 @@ export default function StudentHistory({ id }: { id: string }) {
         </div>
         <div className="mb-3 flex items-center gap-2"><Download size={17} className="text-primary" /><h2 className="font-bold text-gray-800">{t('ประวัติทุกเคส')}</h2></div>
         {orderedCases.length ? <div className="space-y-3">{orderedCases.map((item) => <article key={item.id} className="rounded-2xl border border-[#eee9ef] bg-white p-4 sm:p-5">
-          <div className="flex flex-wrap items-start justify-between gap-2"><div><h3 className="font-semibold text-gray-800">{t(caseTypeName(item))}</h3><p className="mt-1 text-sm text-gray-500">{formatThaiDate(item.scheduled_at)}</p></div><span className={`rounded-full px-3 py-1 text-xs font-medium ${item.status === 'done' ? 'bg-pastel-mint text-[#38583c]' : 'bg-pastel-peach text-[#80533b]'}`}>{t(item.status === 'done' ? 'เสร็จสิ้น' : 'นัดหมายแล้ว')}</span></div>
+          <div className="flex flex-wrap items-start justify-between gap-2"><div><h3 className="font-semibold text-gray-800">{t(caseTypeName(item))}</h3><p className="mt-1 text-sm text-primary">{t(caseServiceTypeName(item.service_type))}</p><p className="mt-1 text-sm text-gray-500">{formatThaiDate(item.scheduled_at)}</p></div><span className={`rounded-full px-3 py-1 text-xs font-medium ${item.appointment_status === 'attended' ? 'bg-pastel-mint text-[#38583c]' : item.appointment_status === 'no_show' ? 'bg-[#fde8e8] text-[#8e3636]' : item.appointment_status === 'rescheduled' ? 'bg-[#e8f0fd] text-[#345d94]' : 'bg-pastel-peach text-[#80533b]'}`}>{t(appointmentStatusName(item.appointment_status))}</span></div>
           <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-gray-600">{item.details || t('ไม่มีรายละเอียด')}</p><p className="mt-3 text-xs text-gray-400">{t('ผู้ดูแล:')} {item.caretakers?.map((caretaker) => caretaker.name).join(', ') || '-'}</p>
         </article>)}</div> : <div className="rounded-2xl border border-dashed border-gray-300 bg-white py-12 text-center text-sm text-gray-500">{t('ยังไม่มีประวัติเคสสำหรับนักเรียนคนนี้')}</div>}
       </>}

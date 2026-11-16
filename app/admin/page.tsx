@@ -36,6 +36,7 @@ const usageActionLabels: Record<string, string> = {
   update_caretaker: 'แก้ไขบัญชีผู้ดูแล',
   deactivate_caretaker: 'ปิดบัญชีผู้ดูแล',
   create_student: 'เพิ่มข้อมูลนักเรียน',
+  archive_all_students: 'เก็บข้อมูลนักเรียนทั้งหมดเข้าคลัง',
   import_students: 'นำเข้ารายชื่อนักเรียน',
   update_student: 'แก้ไขข้อมูลนักเรียน',
   deactivate_student: 'ปิดข้อมูลนักเรียน',

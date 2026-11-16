@@ -4,6 +4,7 @@
   --background: #faf8fc;
   --foreground: #211a27;
   color-scheme: light;
+  zoom: 0.8;
 }
 
 @theme inline {

@@ -1,4 +1,6 @@
 import { requestApi } from '@/lib/api';
+import { caseServiceName, type CaseServiceType } from '@/lib/case-services';
+import type { AppointmentStatus } from '@/types/database';
 import type { itpc_takecare_cases, itpc_takecare_students } from '@/types/database';
 
 export async function fetchCases(): Promise<itpc_takecare_cases[]> {
@@ -28,6 +30,19 @@ export function caseTypeName(caseItem: Pick<itpc_takecare_cases, 'case_type' | '
   if (caseItem.case_type === 'low_confidence') return 'ขาดความมั่นใจ';
   if (caseItem.case_type === 'feel_not_smart') return 'รู้สึกว่าตนเองไม่เก่ง';
   return caseItem.other_text || 'อื่น ๆ';
+}
+
+export function caseServiceTypeName(serviceType: CaseServiceType | null | undefined): string {
+  return caseServiceName(serviceType) ?? 'ยังไม่ระบุบริการ';
+}
+
+export function appointmentStatusName(status: AppointmentStatus): string {
+  switch (status) {
+    case 'attended': return 'มาตามนัด';
+    case 'no_show': return 'ไม่มาตามนัด';
+    case 'rescheduled': return 'เลื่อนนัด';
+    case 'scheduled': return 'นัดหมายแล้ว';
+  }
 }
 
 export function formatThaiDate(value: string, withTime = true): string {

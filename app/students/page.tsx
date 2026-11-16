@@ -1,9 +1,10 @@
 'use client';
 
 import Link from 'next/link';
+import Image from 'next/image';
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
-import { FileSpreadsheet, Pencil, Search, Upload, UserPlus, UsersRound } from 'lucide-react';
+import { Archive, FileSpreadsheet, Pencil, Search, Upload, UserPlus, UsersRound } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import ImagePreview from '@/components/ImagePreview';
 import { useConfirmDialog } from '@/components/ConfirmDialog';
@@ -12,6 +13,7 @@ import { fetchCases, studentName } from '@/lib/cases';
 import { useSessionCaretaker } from '@/lib/session';
 import { requestApi } from '@/lib/api';
 import { prepareProfilePhoto } from '@/lib/profile-image';
+import { calculateStudentAge, createEmptyStudentIntakeFormData, STUDENT_CLASSROOM_OPTIONS, STUDENT_INTAKE_SECTIONS, type StudentIntakeFormData } from '@/lib/student-intake-form';
 import { useLanguage } from '@/lib/language';
 import type { itpc_takecare_cases, itpc_takecare_students } from '@/types/database';
 
@@ -25,6 +27,7 @@ type StudentForm = {
   gender: string;
   academicYear: string;
   photoDataUrl: string;
+  intakeFormData: StudentIntakeFormData;
 };
 
 type StudentImportRow = {
@@ -38,6 +41,21 @@ type StudentImportRow = {
 };
 
 const DEFAULT_ACADEMIC_YEAR = '2569';
+function createEmptyStudentForm(academicYear = DEFAULT_ACADEMIC_YEAR): StudentForm {
+  return {
+    studentId: '',
+    firstNameTh: '',
+    lastNameTh: '',
+    nicknameTh: '',
+    grade: '',
+    room: '',
+    gender: '',
+    academicYear,
+    photoDataUrl: '',
+    intakeFormData: createEmptyStudentIntakeFormData(),
+  };
+}
+
 const STUDENT_IMPORT_HEADERS = [
   'student_id',
   'first_name_th',
@@ -70,17 +88,7 @@ export default function StudentsPage() {
   const [importAcademicYear, setImportAcademicYear] = useState(DEFAULT_ACADEMIC_YEAR);
   const [importError, setImportError] = useState('');
   const [editingStudent, setEditingStudent] = useState<itpc_takecare_students | null>(null);
-  const [studentForm, setStudentForm] = useState<StudentForm>({
-    studentId: '',
-    firstNameTh: '',
-    lastNameTh: '',
-    nicknameTh: '',
-    grade: '',
-    room: '',
-    gender: '',
-    academicYear: DEFAULT_ACADEMIC_YEAR,
-    photoDataUrl: '',
-  });
+  const [studentForm, setStudentForm] = useState<StudentForm>(() => createEmptyStudentForm());
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -127,9 +135,25 @@ export default function StudentsPage() {
     const content = [student.student_id, student.first_name_th, student.last_name_th, student.nickname_th].filter(Boolean).join(' ').toLocaleLowerCase('th');
     return content.includes(search.toLocaleLowerCase('th')) && (!grade || student.grade === grade) && (!room || String(student.room) === room);
   });
-
+  const selectedClassroom = studentForm.grade && studentForm.room
+    ? `${studentForm.grade}/${studentForm.room}`
+    : '';
+  const hasSelectedClassroom = STUDENT_CLASSROOM_OPTIONS.some(
+    ({ grade: optionGrade, room: optionRoom }) => `${optionGrade}/${optionRoom}` === selectedClassroom,
+  );
   async function saveStudent(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const intakeFormData = { ...studentForm.intakeFormData };
+    const age = typeof intakeFormData.dateOfBirth === 'string'
+      ? calculateStudentAge(intakeFormData.dateOfBirth)
+      : null;
+    if (intakeFormData.dateOfBirth && !age) {
+      setError(t('วันเกิดไม่ถูกต้อง'));
+      return;
+    }
+    intakeFormData.ageYears = age === null ? '' : String(age);
+    delete intakeFormData.ageMonths;
+    const studentFormWithAge = { ...studentForm, intakeFormData };
     const displayName = [studentForm.firstNameTh, studentForm.lastNameTh].filter(Boolean).join(' ') || studentForm.studentId || t('นักเรียน');
     if (editingStudent) {
       if (!await confirm({
@@ -147,14 +171,14 @@ export default function StudentsPage() {
     setNotice('');
     try {
       if (editingStudent) {
-        await requestApi('updateStudent', { id: editingStudent.id, ...studentForm });
+        await requestApi('updateStudent', { id: editingStudent.id, ...studentFormWithAge });
       } else {
-        await requestApi('createStudent', studentForm);
+        await requestApi('createStudent', studentFormWithAge);
       }
       setSelectedYear(studentForm.academicYear);
       setGrade('');
       setRoom('');
-      setStudentForm({ ...studentForm, studentId: '', firstNameTh: '', lastNameTh: '', nicknameTh: '', room: '', photoDataUrl: '' });
+      setStudentForm(createEmptyStudentForm(studentForm.academicYear));
       setEditingStudent(null);
       setShowStudentForm(false);
       setNotice(editingStudent
@@ -168,21 +192,66 @@ export default function StudentsPage() {
     }
   }
 
-  function editStudent(student: itpc_takecare_students) {
-    setEditingStudent(student);
-    setStudentForm({
-      studentId: student.student_id ?? '',
-      firstNameTh: student.first_name_th ?? '',
-      lastNameTh: student.last_name_th ?? '',
-      nicknameTh: student.nickname_th ?? '',
-      grade: student.grade ?? '',
-      room: student.room === null ? '' : String(student.room),
-      gender: student.gender ?? '',
-      academicYear: student.academic_year,
-      photoDataUrl: '',
-    });
+  async function editStudent(student: itpc_takecare_students) {
+    setSaving(true);
     setError('');
-    setShowStudentForm(true);
+    try {
+      const intakeFormData = await requestApi<StudentIntakeFormData>('getStudentIntakeForm', { id: student.id });
+      setEditingStudent(student);
+      const savedIntakeFormData = { ...createEmptyStudentIntakeFormData(), ...intakeFormData };
+      const age = typeof savedIntakeFormData.dateOfBirth === 'string'
+        ? calculateStudentAge(savedIntakeFormData.dateOfBirth)
+        : null;
+      savedIntakeFormData.ageYears = age === null ? '' : String(age);
+      delete savedIntakeFormData.ageMonths;
+      setStudentForm({
+        studentId: student.student_id ?? '',
+        firstNameTh: student.first_name_th ?? '',
+        lastNameTh: student.last_name_th ?? '',
+        nicknameTh: student.nickname_th ?? '',
+        grade: student.grade ?? '',
+        room: student.room === null ? '' : String(student.room),
+        gender: student.gender ?? '',
+        academicYear: student.academic_year,
+        photoDataUrl: '',
+        intakeFormData: savedIntakeFormData,
+      });
+      setShowStudentForm(true);
+    } catch (loadError) {
+      setError(`${t('โหลดแบบบันทึกนักเรียนไม่สำเร็จ')}: ${loadError instanceof Error ? loadError.message : t('เกิดข้อผิดพลาดที่ไม่ทราบสาเหตุ')}`);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function archiveAllStudents() {
+    if (!await confirm({
+      title: t('เก็บข้อมูลนักเรียนทั้งหมดเข้าคลัง?'),
+      description: t('ข้อมูลนักเรียนที่ใช้งานอยู่ทุกปีการศึกษาจะถูกซ่อนจากรายชื่อ แต่ข้อมูลและประวัติเคสจะยังคงอยู่'),
+      confirmLabel: t('เก็บเข้าคลัง'),
+      tone: 'danger',
+    })) return;
+    setSaving(true);
+    setError('');
+    setNotice('');
+    try {
+      const result = await requestApi<{ archived: number }>('archiveAllStudents');
+      setNotice(`${t('เก็บข้อมูลนักเรียนเข้าคลังแล้ว')} ${result.archived} ${t('รายการ')}`);
+      setGrade('');
+      setRoom('');
+      await loadData(DEFAULT_ACADEMIC_YEAR);
+    } catch (archiveError) {
+      setError(`${t('เก็บข้อมูลนักเรียนเข้าคลังไม่สำเร็จ')}: ${archiveError instanceof Error ? archiveError.message : t('เกิดข้อผิดพลาดที่ไม่ทราบสาเหตุ')}`);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function updateIntakeField(key: string, value: string | string[]) {
+    setStudentForm((current) => ({
+      ...current,
+      intakeFormData: { ...current.intakeFormData, [key]: value },
+    }));
   }
 
   async function deactivateStudent(student: itpc_takecare_students) {
@@ -287,8 +356,9 @@ export default function StudentsPage() {
       <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
         <div><p className="text-sm font-medium text-primary">{t('ข้อมูลนักเรียน')}</p><h1 className="mt-1 text-2xl font-bold text-gray-800 sm:text-3xl">{t('รายชื่อนักเรียน')}</h1><p className="mt-1 text-sm text-gray-500">{t('ปีการศึกษา')} {selectedYear} · {students.length} {t('นักเรียน')}</p></div>
         {user.role === 'admin' && <div className="flex flex-wrap gap-2">
-          <button onClick={() => { setEditingStudent(null); setStudentForm({ studentId: '', firstNameTh: '', lastNameTh: '', nicknameTh: '', grade: '', room: '', gender: '', academicYear: selectedYear || DEFAULT_ACADEMIC_YEAR, photoDataUrl: '' }); setShowStudentForm(true); }} className="flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-hover"><UserPlus size={17} />{t('เพิ่มนักเรียน')}</button>
+          <button onClick={() => { setEditingStudent(null); setStudentForm(createEmptyStudentForm(selectedYear || DEFAULT_ACADEMIC_YEAR)); setShowStudentForm(true); }} className="flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-hover"><UserPlus size={17} />{t('เพิ่มนักเรียน')}</button>
           <button onClick={() => { setImportAcademicYear(selectedYear || DEFAULT_ACADEMIC_YEAR); setImportError(''); setShowImportDialog(true); }} className="flex items-center gap-2 rounded-xl border border-primary/30 bg-white px-4 py-2.5 text-sm font-semibold text-primary hover:bg-primary-light"><FileSpreadsheet size={17} />{t('นำเข้า Excel')}</button>
+          <button disabled={saving} onClick={() => void archiveAllStudents()} className="flex items-center gap-2 rounded-xl border border-red-200 bg-white px-4 py-2.5 text-sm font-semibold text-red-700 hover:bg-red-50 disabled:opacity-60"><Archive size={17} />{t('เก็บนักเรียนทั้งหมดเข้าคลัง')}</button>
         </div>}
       </div>
       {error && <p role="alert" className="mb-4 rounded-xl bg-red-50 p-3 text-sm text-red-700">{error} <button onClick={() => { setLoading(true); void loadData(selectedYear); }} className="underline">{t('ลองอีกครั้ง')}</button></p>}
@@ -311,7 +381,7 @@ export default function StudentsPage() {
             <span className="shrink-0 text-right"><span className="block text-lg font-bold text-primary">{caseCounts.get(student.id) ?? 0}</span><span className="text-[11px] text-gray-400">{t('เคส')}</span></span>
           </div>
           {user.role === 'admin' && <div className="mt-3 grid grid-cols-2 gap-2">
-            <button disabled={saving} onClick={() => editStudent(student)} className="flex items-center justify-center gap-2 rounded-lg border border-primary/30 py-2 text-xs font-medium text-primary hover:bg-primary-light disabled:opacity-60"><Pencil size={14} />{t('แก้ไขข้อมูล')}</button>
+            <button disabled={saving} onClick={() => void editStudent(student)} className="flex items-center justify-center gap-2 rounded-lg border border-primary/30 py-2 text-xs font-medium text-primary hover:bg-primary-light disabled:opacity-60"><Pencil size={14} />{t('แก้ไขข้อมูล')}</button>
             <button disabled={saving} onClick={() => void deactivateStudent(student)} className="rounded-lg border border-red-200 py-2 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-60">{t('ปิดข้อมูลนักเรียน')}</button>
           </div>}
         </article>)}
@@ -319,42 +389,139 @@ export default function StudentsPage() {
     </section>
 
     {showStudentForm && <div className="fixed inset-0 z-50 grid place-items-center overflow-y-auto bg-black/40 p-4">
-      <form onSubmit={saveStudent} className="my-auto w-full max-w-2xl rounded-3xl bg-white p-5 shadow-2xl sm:p-7">
-        <h2 className="text-xl font-bold text-gray-800">{t(editingStudent ? 'แก้ไขข้อมูลนักเรียน' : 'เพิ่มข้อมูลนักเรียน')}</h2>
-        <p className="mt-1 text-sm text-gray-500">{t(editingStudent ? 'แก้ไขได้เฉพาะ admin และข้อมูลยังแยกตามปีการศึกษา' : 'เพิ่มได้เฉพาะ admin และข้อมูลจะแยกตามปีการศึกษา')}</p>
-        <div className="mt-5 grid gap-3 sm:grid-cols-2">
-          <label className="text-sm text-gray-600">{t('ปีการศึกษา')}
-            <input required pattern="[0-9]{4}" maxLength={4} value={studentForm.academicYear} onChange={(event) => setStudentForm({ ...studentForm, academicYear: event.target.value })} className="mt-1 w-full rounded-xl border border-gray-200 px-3 py-2.5" />
-          </label>
-          <label className="text-sm text-gray-600">{t('รหัสนักเรียน')}
-            <input value={studentForm.studentId} onChange={(event) => setStudentForm({ ...studentForm, studentId: event.target.value })} className="mt-1 w-full rounded-xl border border-gray-200 px-3 py-2.5" />
-          </label>
-          <label className="text-sm text-gray-600">{t('ชื่อ')}
-            <input value={studentForm.firstNameTh} onChange={(event) => setStudentForm({ ...studentForm, firstNameTh: event.target.value })} className="mt-1 w-full rounded-xl border border-gray-200 px-3 py-2.5" />
-          </label>
-          <label className="text-sm text-gray-600">{t('นามสกุล')}
-            <input value={studentForm.lastNameTh} onChange={(event) => setStudentForm({ ...studentForm, lastNameTh: event.target.value })} className="mt-1 w-full rounded-xl border border-gray-200 px-3 py-2.5" />
-          </label>
-          <label className="text-sm text-gray-600">{t('ชื่อเล่น')}
-            <input value={studentForm.nicknameTh} onChange={(event) => setStudentForm({ ...studentForm, nicknameTh: event.target.value })} className="mt-1 w-full rounded-xl border border-gray-200 px-3 py-2.5" />
-          </label>
-          <label className="text-sm text-gray-600">{t('ระดับชั้น')}
-            <input value={studentForm.grade} onChange={(event) => setStudentForm({ ...studentForm, grade: event.target.value })} className="mt-1 w-full rounded-xl border border-gray-200 px-3 py-2.5" />
-          </label>
-          <label className="text-sm text-gray-600">{t('ห้อง')}
-            <input type="number" min={1} value={studentForm.room} onChange={(event) => setStudentForm({ ...studentForm, room: event.target.value })} className="mt-1 w-full rounded-xl border border-gray-200 px-3 py-2.5" />
-          </label>
-          <label className="text-sm text-gray-600">{t('เพศ')}
-            <input value={studentForm.gender} onChange={(event) => setStudentForm({ ...studentForm, gender: event.target.value })} className="mt-1 w-full rounded-xl border border-gray-200 px-3 py-2.5" />
-          </label>
-          <label className="text-sm text-gray-600 sm:col-span-2">{t('รูปนักเรียน')}
-            <input type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => {
-              const file = event.target.files?.[0];
-              if (file) void prepareProfilePhoto(file).then((photoDataUrl) => setStudentForm((current) => ({ ...current, photoDataUrl }))).catch((photoError: unknown) => setError(photoError instanceof Error ? photoError.message : t('เตรียมรูปภาพไม่สำเร็จ')));
-            }} className="mt-1 w-full rounded-xl border border-gray-200 px-3 py-2 text-sm" />
-            {(studentForm.photoDataUrl || editingStudent?.profile_photo_url) && <ImagePreview src={studentForm.photoDataUrl || editingStudent?.profile_photo_url || ''} alt="ตัวอย่างรูปนักเรียน" width={72} height={72} className="mt-2 h-[72px] w-[72px] rounded-2xl" />}
-          </label>
-        </div>
+      <form onSubmit={saveStudent} className="my-auto max-h-[calc(100vh-2rem)] w-full max-w-4xl overflow-y-auto rounded-3xl bg-white p-5 shadow-2xl sm:p-7">
+        <header className="border-b border-gray-200 pb-5 text-center">
+          <Image
+            src="/cmu-itpc-logo.png"
+            alt="CMU-ITPC"
+            width={129}
+            height={135}
+            className="mx-auto h-16 w-16 object-contain"
+            priority
+          />
+          <p className="mt-3 text-sm text-gray-700">{t('ฝ่ายส่งเสริมพัฒนาการและกิจการนักเรียน')}</p>
+          <p className="text-sm text-gray-700">{t('โรงเรียนสาธิตมหาวิทยาลัยเชียงใหม่ ระดับอนุบาลและประถมศึกษา')}</p>
+          <h2 className="mt-2 text-xl font-bold text-gray-900">{t('แบบบันทึกข้อมูลนักเรียน')}</h2>
+          <p className="mt-1 text-sm text-gray-500">{t(editingStudent ? 'แก้ไขได้เฉพาะ admin และข้อมูลยังแยกตามปีการศึกษา' : 'เพิ่มได้เฉพาะ admin และข้อมูลจะแยกตามปีการศึกษา')}</p>
+        </header>
+        {STUDENT_INTAKE_SECTIONS.map((section, sectionIndex) => <fieldset key={section.title} className="mt-6 border-t border-gray-100 pt-4">
+          <legend className="px-1 text-base font-semibold text-gray-800">
+            <span className="mr-2 inline-grid h-7 w-7 place-items-center rounded-lg bg-primary-light text-sm text-primary">{sectionIndex + 1}</span>
+            {t(section.title)}
+          </legend>
+          {section === STUDENT_INTAKE_SECTIONS[0] && <div className="grid gap-3 sm:grid-cols-2">
+            <label className="text-sm text-gray-600">{t('ปีการศึกษา')}
+              <input required pattern="[0-9]{4}" maxLength={4} value={studentForm.academicYear} onChange={(event) => setStudentForm({ ...studentForm, academicYear: event.target.value })} className="mt-1 w-full rounded-xl border border-gray-200 px-3 py-2.5" />
+            </label>
+            <label className="text-sm text-gray-600">{t('รหัสนักเรียน')}
+              <input value={studentForm.studentId} onChange={(event) => setStudentForm({ ...studentForm, studentId: event.target.value })} className="mt-1 w-full rounded-xl border border-gray-200 px-3 py-2.5" />
+            </label>
+            <label className="text-sm text-gray-600">{t('ชื่อ')}
+              <input value={studentForm.firstNameTh} onChange={(event) => setStudentForm({ ...studentForm, firstNameTh: event.target.value })} className="mt-1 w-full rounded-xl border border-gray-200 px-3 py-2.5" />
+            </label>
+            <label className="text-sm text-gray-600">{t('นามสกุล')}
+              <input value={studentForm.lastNameTh} onChange={(event) => setStudentForm({ ...studentForm, lastNameTh: event.target.value })} className="mt-1 w-full rounded-xl border border-gray-200 px-3 py-2.5" />
+            </label>
+            <label className="text-sm text-gray-600">{t('ชื่อเล่น')}
+              <input value={studentForm.nicknameTh} onChange={(event) => setStudentForm({ ...studentForm, nicknameTh: event.target.value })} className="mt-1 w-full rounded-xl border border-gray-200 px-3 py-2.5" />
+            </label>
+            <label className="text-sm text-gray-600">{t('ชั้นเรียน / ห้อง')}
+              <select
+                required
+                value={selectedClassroom}
+                onChange={(event) => {
+                  const classroom = event.target.value;
+                  const separator = classroom.lastIndexOf('/');
+                  setStudentForm((current) => ({
+                    ...current,
+                    grade: classroom.slice(0, separator),
+                    room: classroom.slice(separator + 1),
+                  }));
+                }}
+                className="mt-1 w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5"
+              >
+                <option value="" disabled>{t('เลือกชั้นเรียน / ห้อง')}</option>
+                {!hasSelectedClassroom && selectedClassroom && <option value={selectedClassroom}>{selectedClassroom}</option>}
+                {STUDENT_CLASSROOM_OPTIONS.map(({ grade: optionGrade, room: optionRoom }) => {
+                  const classroom = `${optionGrade}/${optionRoom}`;
+                  return <option key={classroom} value={classroom}>{classroom}</option>;
+                })}
+              </select>
+            </label>
+            <label className="text-sm text-gray-600">{t('เพศ')}
+              <input value={studentForm.gender} onChange={(event) => setStudentForm({ ...studentForm, gender: event.target.value })} className="mt-1 w-full rounded-xl border border-gray-200 px-3 py-2.5" />
+            </label>
+            <label className="text-sm text-gray-600 sm:col-span-2">{t('รูปนักเรียน')}
+              <input type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => {
+                const file = event.target.files?.[0];
+                if (file) void prepareProfilePhoto(file).then((photoDataUrl) => setStudentForm((current) => ({ ...current, photoDataUrl }))).catch((photoError: unknown) => setError(photoError instanceof Error ? photoError.message : t('เตรียมรูปภาพไม่สำเร็จ')));
+              }} className="mt-1 w-full rounded-xl border border-gray-200 px-3 py-2 text-sm" />
+              {(studentForm.photoDataUrl || editingStudent?.profile_photo_url) && <ImagePreview src={studentForm.photoDataUrl || editingStudent?.profile_photo_url || ''} alt="ตัวอย่างรูปนักเรียน" width={72} height={72} className="mt-2 h-[72px] w-[72px] rounded-2xl" />}
+            </label>
+          </div>}
+          <div className="grid gap-3 sm:grid-cols-2">
+            {section.fields.map((field) => {
+              const currentValue = studentForm.intakeFormData[field.key];
+              const selectedValues = Array.isArray(currentValue)
+                ? currentValue.filter((value): value is string => typeof value === 'string')
+                : [];
+              const textValue = typeof currentValue === 'string' ? currentValue : '';
+              if (field.type === 'checkboxes') {
+                return <fieldset key={field.key} className="rounded-xl border border-gray-100 p-3 text-sm text-gray-600 sm:col-span-2">
+                  <legend className="px-1">{t(field.label)}</legend>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {field.options?.map((option) => <label key={option} className="flex items-start gap-2">
+                      <input
+                        type="checkbox"
+                        checked={selectedValues.includes(option)}
+                        onChange={(event) => updateIntakeField(
+                          field.key,
+                          event.target.checked
+                            ? [...selectedValues, option]
+                            : selectedValues.filter((value) => value !== option),
+                        )}
+                        className="mt-1 accent-primary"
+                      />
+                      <span>{t(option)}</span>
+                    </label>)}
+                  </div>
+                </fieldset>;
+              }
+              return <label key={field.key} className={`text-sm text-gray-600 ${field.type === 'textarea' ? 'sm:col-span-2' : ''}`}>
+                {t(field.label)}
+                {field.type === 'textarea'
+                  ? <textarea
+                    value={textValue}
+                    onChange={(event) => updateIntakeField(field.key, event.target.value)}
+                    rows={3}
+                    className="mt-1 w-full rounded-xl border border-gray-200 px-3 py-2.5"
+                  />
+                  : <input
+                    type={field.type === 'date' || field.type === 'number' ? field.type : 'text'}
+                    min={field.type === 'number' ? 0 : undefined}
+                    readOnly={field.key === 'ageYears'}
+                    value={textValue}
+                    onChange={(event) => {
+                      if (field.key === 'dateOfBirth') {
+                        const age = calculateStudentAge(event.target.value);
+                        setStudentForm((current) => ({
+                          ...current,
+                          intakeFormData: {
+                            ...current.intakeFormData,
+                            dateOfBirth: event.target.value,
+                            ageYears: age === null ? '' : String(age),
+                          },
+                        }));
+                      } else {
+                        updateIntakeField(field.key, event.target.value);
+                      }
+                    }}
+                    className="mt-1 w-full rounded-xl border border-gray-200 px-3 py-2.5"
+                  />}
+              </label>;
+            })}
+          </div>
+        </fieldset>)}
         <div className="mt-5 flex justify-end gap-2">
           <button type="button" onClick={() => { setShowStudentForm(false); setEditingStudent(null); }} className="rounded-lg px-4 py-2 text-sm text-gray-600">{t('ยกเลิก')}</button>
           <button disabled={saving} className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white disabled:opacity-60">{saving ? t('กำลังบันทึก...') : t(editingStudent ? 'บันทึกการแก้ไข' : 'บันทึกนักเรียน')}</button>

@@ -1,5 +1,8 @@
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import { isCaseServiceType } from '@/lib/case-services';
+import type { CaseServiceFormData } from '@/lib/case-service-forms';
+import type { StudentIntakeFormData } from '@/lib/student-intake-form';
 import type { itpc_takecare_cases, itpc_takecare_caretakers, itpc_takecare_students } from '@/types/database';
 
 type ApiBody = Record<string, unknown> & { action?: unknown };
@@ -88,6 +91,66 @@ function importedStudents(value: unknown): ImportedStudent[] {
       gender: gender || null,
     };
   });
+}
+
+function studentIntakeFormData(value: unknown): StudentIntakeFormData {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error('ข้อมูลแบบบันทึกนักเรียนไม่ถูกต้อง');
+  }
+  const entries = Object.entries(value as Record<string, unknown>);
+  if (entries.length > 100) throw new Error('ข้อมูลแบบบันทึกนักเรียนมีจำนวนช่องมากเกินไป');
+
+  const result: StudentIntakeFormData = {};
+  for (const [key, fieldValue] of entries) {
+    if (!/^[A-Za-z][A-Za-z0-9_]{0,99}$/.test(key)) {
+      throw new Error('ชื่อช่องข้อมูลแบบบันทึกนักเรียนไม่ถูกต้อง');
+    }
+    if (typeof fieldValue === 'string' && fieldValue.length <= 5000) {
+      result[key] = fieldValue;
+    } else if (
+      Array.isArray(fieldValue) &&
+      fieldValue.length <= 50 &&
+      fieldValue.every((item): item is string => typeof item === 'string' && item.length <= 200)
+    ) {
+      result[key] = [...fieldValue];
+    } else {
+      throw new Error('ข้อมูลในแบบบันทึกนักเรียนไม่ถูกต้องหรือยาวเกินไป');
+    }
+  }
+  if (Buffer.byteLength(JSON.stringify(result), 'utf8') > 50_000) {
+    throw new Error('ข้อมูลแบบบันทึกนักเรียนมีขนาดใหญ่เกินไป');
+  }
+  return result;
+}
+
+function caseServiceFormData(value: unknown): CaseServiceFormData {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error('ข้อมูลแบบฟอร์มบริการไม่ถูกต้อง');
+  }
+  const entries = Object.entries(value as Record<string, unknown>);
+  if (entries.length > 100) throw new Error('ข้อมูลแบบฟอร์มบริการมีจำนวนช่องมากเกินไป');
+
+  const result: CaseServiceFormData = {};
+  for (const [key, fieldValue] of entries) {
+    if (!/^[A-Za-z][A-Za-z0-9_]{0,99}$/.test(key)) {
+      throw new Error('ชื่อช่องข้อมูลแบบฟอร์มบริการไม่ถูกต้อง');
+    }
+    if (typeof fieldValue === 'string' && fieldValue.length <= 5000) {
+      result[key] = fieldValue;
+    } else if (
+      Array.isArray(fieldValue) &&
+      fieldValue.length <= 50 &&
+      fieldValue.every((item): item is string => typeof item === 'string' && item.length <= 200)
+    ) {
+      result[key] = [...fieldValue];
+    } else {
+      throw new Error('ข้อมูลในแบบฟอร์มบริการไม่ถูกต้องหรือยาวเกินไป');
+    }
+  }
+  if (Buffer.byteLength(JSON.stringify(result), 'utf8') > 50_000) {
+    throw new Error('ข้อมูลแบบฟอร์มบริการมีขนาดใหญ่เกินไป');
+  }
+  return result;
 }
 
 function optionalInteger(body: ApiBody, key: string): number | null {
@@ -560,8 +623,9 @@ export async function POST(request: Request) {
         const nickname = optionalString(body, 'nicknameTh');
         const grade = optionalString(body, 'grade');
         const gender = optionalString(body, 'gender');
+        const formData = studentIntakeFormData(body.intakeFormData);
         const photoPath = await uploadProfilePhoto(supabase, 'student-photos', id, body.photoDataUrl);
-        const { data, error } = await supabase.rpc('admin_create_student', {
+        const { data, error } = await supabase.rpc('admin_create_student_with_intake_form', {
           p_id: id,
           p_student_id: studentId,
           p_first_name_th: firstName,
@@ -572,10 +636,14 @@ export async function POST(request: Request) {
           p_gender: gender,
           p_academic_year: academicYear,
           p_profile_image_path: photoPath,
+          p_form_data: formData,
         });
         if (error && photoPath) {
           const { error: removeError } = await supabase.storage.from('student-photos').remove([photoPath]);
           if (removeError) throw new Error(`${error.message}; ลบรูปนักเรียนที่อัปโหลดไม่สำเร็จ: ${removeError.message}`);
+        }
+        if (error?.message.toLowerCase().includes('admin_create_student_with_intake_form')) {
+          throw new Error('ระบบบันทึกแบบฟอร์มนักเรียนยังไม่พร้อม กรุณารัน migration 20261116000000_student_intake_form.sql บน Supabase');
         }
         throwIfError(error);
         const studentName = [firstName, lastName].filter(Boolean).join(' ') || studentId || id;
@@ -608,6 +676,7 @@ export async function POST(request: Request) {
           return response('Invalid room', 400);
         }
         const academicYear = requiredString(body, 'academicYear');
+        const formData = studentIntakeFormData(body.intakeFormData);
         const { data: current, error: currentError } = await supabase
           .from('itpc_takecare_students')
           .select('first_name_th, last_name_th, academic_year, profile_image_path')
@@ -617,7 +686,7 @@ export async function POST(request: Request) {
         throwIfError(currentError);
         if (!current) return response('ไม่พบข้อมูลนักเรียนที่เปิดใช้งาน', 404);
         const uploadedPath = await uploadProfilePhoto(supabase, 'student-photos', id, body.photoDataUrl);
-        const { error } = await supabase.rpc('admin_update_student', {
+        const { error } = await supabase.rpc('admin_update_student_with_intake_form', {
           p_id: id,
           p_student_id: optionalString(body, 'studentId'),
           p_first_name_th: optionalString(body, 'firstNameTh'),
@@ -628,9 +697,10 @@ export async function POST(request: Request) {
           p_gender: optionalString(body, 'gender'),
           p_academic_year: academicYear,
           p_profile_image_path: uploadedPath ?? current.profile_image_path,
+          p_form_data: formData,
         });
-        if (error?.message.toLowerCase().includes('admin_update_student')) {
-          throw new Error('ระบบแก้ไขข้อมูลนักเรียนยังไม่พร้อม กรุณารัน migration 20261027000006_admin_update_student.sql แล้วลองใหม่');
+        if (error?.message.toLowerCase().includes('admin_update_student_with_intake_form')) {
+          throw new Error('ระบบบันทึกแบบฟอร์มนักเรียนยังไม่พร้อม กรุณารัน migration 20261116000000_student_intake_form.sql บน Supabase');
         }
         throwIfError(error);
         const studentName = [
@@ -661,6 +731,28 @@ export async function POST(request: Request) {
           `${studentName}${target?.academic_year ? ` (${target.academic_year})` : ''}`,
         );
         return response(null);
+      }
+      case 'archiveAllStudents': {
+        if (!isAdmin(caretaker)) return response('ต้องใช้สิทธิ์ admin', 403);
+        const { data, error } = await supabase.rpc('admin_archive_all_students');
+        if (error?.message.toLowerCase().includes('admin_archive_all_students')) {
+          throw new Error('ระบบเก็บข้อมูลนักเรียนเข้าคลังยังไม่พร้อม กรุณารัน migration 20261116000000_student_intake_form.sql บน Supabase');
+        }
+        throwIfError(error);
+        if (typeof data !== 'number') throw new Error('ผลการเก็บข้อมูลนักเรียนเข้าคลังไม่ถูกต้อง');
+        await recordUsageLog(supabase, caretaker, 'archive_all_students', `${data} student records archived`);
+        return response({ archived: data });
+      }
+      case 'getStudentIntakeForm': {
+        if (!isAdmin(caretaker)) return response('ต้องใช้สิทธิ์ admin', 403);
+        const { data, error } = await supabase.rpc('admin_get_student_intake_form', {
+          p_student_id: requiredString(body, 'id'),
+        });
+        if (error?.message.toLowerCase().includes('admin_get_student_intake_form')) {
+          throw new Error('ระบบอ่านแบบฟอร์มนักเรียนยังไม่พร้อม กรุณารัน migration 20261116000000_student_intake_form.sql บน Supabase');
+        }
+        throwIfError(error);
+        return response(data);
       }
       case 'getStudent': {
         const { data, error } = await supabase
@@ -728,18 +820,26 @@ export async function POST(request: Request) {
       }
       case 'caseDetails': {
         const caseId = requiredString(body, 'caseId');
-        const [updateResult, signatureResult, caretakerResult] = await Promise.all([
+        const [updateResult, signatureResult, caretakerResult, serviceFormResult] = await Promise.all([
           supabase.from('itpc_takecare_case_updates').select('*').eq('case_id', caseId).order('created_at', { ascending: false }),
           supabase.from('itpc_takecare_case_signatures').select('*').eq('case_id', caseId).order('signed_at', { ascending: false }),
           supabase.from('itpc_takecare_caretakers')
             .select('id, name, role, created_at, deactivated_at')
             .is('deactivated_at', null),
+          supabase.from('itpc_takecare_case_service_forms')
+            .select('case_id, service_type, form_data, recorded_by, updated_at')
+            .eq('case_id', caseId)
+            .maybeSingle(),
         ]);
-        throwIfError(updateResult.error ?? signatureResult.error ?? caretakerResult.error);
+        if (serviceFormResult.error?.message.toLowerCase().includes('itpc_takecare_case_service_forms')) {
+          throw new Error('แบบฟอร์มบริการยังไม่พร้อม กรุณารัน migration 20261116000002_case_appointment_and_service_forms.sql บน Supabase');
+        }
+        throwIfError(serviceFormResult.error ?? updateResult.error ?? signatureResult.error ?? caretakerResult.error);
         return response({
           updates: updateResult.data ?? [],
           signatures: signatureResult.data ?? [],
           caretakers: caretakerResult.data ?? [],
+          serviceForm: serviceFormResult.data ?? null,
         });
       }
       case 'createCase': {
@@ -747,7 +847,9 @@ export async function POST(request: Request) {
         if (!['low_confidence', 'feel_not_smart', 'other'].includes(caseType)) {
           return response('Invalid caseType', 400);
         }
-        const { data, error } = await supabase.rpc('create_case_with_relations', {
+        const serviceType = requiredString(body, 'serviceType');
+        if (!isCaseServiceType(serviceType)) return response('Invalid serviceType', 400);
+        const { data, error } = await supabase.rpc('create_case_with_service', {
           p_case_type: caseType,
           p_other_text: optionalString(body, 'otherText'),
           p_details: optionalString(body, 'details'),
@@ -755,7 +857,11 @@ export async function POST(request: Request) {
           p_created_by: caretaker.id,
           p_student_ids: stringArray(body, 'studentIds'),
           p_caretaker_ids: stringArray(body, 'caretakerIds'),
+          p_service_type: serviceType,
         });
+        if (error?.message.toLowerCase().includes('create_case_with_service')) {
+          throw new Error('ระบบบันทึกประเภทบริการยังไม่พร้อม กรุณารัน migration 20261116000001_case_service_type.sql บน Supabase');
+        }
         throwIfError(error);
         const caseTypeLabel = caseType === 'low_confidence'
           ? 'ความมั่นใจต่ำ'
@@ -775,7 +881,9 @@ export async function POST(request: Request) {
         if (!['low_confidence', 'feel_not_smart', 'other'].includes(caseType)) {
           return response('Invalid caseType', 400);
         }
-        const { error } = await supabase.rpc('admin_update_case_with_relations', {
+        const serviceType = requiredString(body, 'serviceType');
+        if (!isCaseServiceType(serviceType)) return response('Invalid serviceType', 400);
+        const { error } = await supabase.rpc('admin_update_case_with_service', {
           p_case_id: caseId,
           p_case_type: caseType,
           p_other_text: optionalString(body, 'otherText'),
@@ -783,7 +891,11 @@ export async function POST(request: Request) {
           p_scheduled_at: requiredString(body, 'scheduledAt'),
           p_student_ids: stringArray(body, 'studentIds'),
           p_caretaker_ids: stringArray(body, 'caretakerIds'),
+          p_service_type: serviceType,
         });
+        if (error?.message.toLowerCase().includes('admin_update_case_with_service')) {
+          throw new Error('ระบบแก้ไขประเภทบริการยังไม่พร้อม กรุณารัน migration 20261116000001_case_service_type.sql บน Supabase');
+        }
         throwIfError(error);
         await recordUsageLog(supabase, caretaker, 'update_case', `case ${caseId}`);
         return response(null);
@@ -811,6 +923,49 @@ export async function POST(request: Request) {
         throwIfError(error);
         if (!data) return response('ไม่พบเคสหรือไม่มีสิทธิ์เปลี่ยนสถานะ', 404);
         await recordUsageLog(supabase, caretaker, 'update_case_status', `case ${caseId}: ${status}`);
+        return response(null);
+      }
+      case 'updateAppointmentOutcome': {
+        const caseId = requiredString(body, 'caseId');
+        const appointmentStatus = requiredString(body, 'appointmentStatus');
+        if (!['scheduled', 'attended', 'no_show', 'rescheduled'].includes(appointmentStatus)) {
+          return response('Invalid appointmentStatus', 400);
+        }
+        const update: Record<string, string> = {
+          appointment_status: appointmentStatus,
+          updated_at: new Date().toISOString(),
+        };
+        if (appointmentStatus === 'rescheduled') {
+          const scheduledAt = requiredString(body, 'scheduledAt');
+          const parsedScheduledAt = new Date(scheduledAt);
+          if (Number.isNaN(parsedScheduledAt.getTime())) return response('Invalid scheduledAt', 400);
+          update.scheduled_at = parsedScheduledAt.toISOString();
+        }
+        const { data, error } = await supabase.from('itpc_takecare_cases')
+          .update(update)
+          .eq('id', caseId)
+          .select('id')
+          .maybeSingle();
+        if (error?.message.toLowerCase().includes('appointment_status')) {
+          throw new Error('สถานะนัดหมายยังไม่พร้อม กรุณารัน migration 20261116000002_case_appointment_and_service_forms.sql บน Supabase');
+        }
+        throwIfError(error);
+        if (!data) return response('ไม่พบเคสหรือไม่มีสิทธิ์เปลี่ยนสถานะนัดหมาย', 404);
+        await recordUsageLog(supabase, caretaker, 'update_appointment_outcome', `case ${caseId}: ${appointmentStatus}`);
+        return response(null);
+      }
+      case 'saveCaseServiceForm': {
+        const caseId = requiredString(body, 'caseId');
+        const formData = caseServiceFormData(body.formData);
+        const { error } = await supabase.rpc('save_case_service_form', {
+          p_case_id: caseId,
+          p_form_data: formData,
+        });
+        if (error?.message.toLowerCase().includes('save_case_service_form')) {
+          throw new Error('ระบบบันทึกแบบฟอร์มบริการยังไม่พร้อม กรุณารัน migration 20261116000002_case_appointment_and_service_forms.sql บน Supabase');
+        }
+        throwIfError(error);
+        await recordUsageLog(supabase, caretaker, 'save_case_service_form', `case ${caseId}`);
         return response(null);
       }
       case 'listCaseUpdates': {
