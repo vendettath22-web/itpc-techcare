@@ -248,12 +248,13 @@ export default function Home() {
           <div className="grid grid-cols-7">
             {calendarDays.map((date) => {
               const daysCases = visibleCases.filter((item) => dayKey(new Date(item.scheduled_at)) === dayKey(date));
-              return <div key={dayKey(date)} className={`min-h-20 border-b border-r border-[#f0edf2] p-1.5 transition-colors hover:bg-[#fcfaff] sm:min-h-28 sm:p-2 ${!isSameMonth(date, month) ? 'bg-[#faf9fb]' : ''}`}>
-                <button type="button" onClick={() => setSelectedDate(date)} aria-label={`${t('แสดงเคสวันที่')} ${format(date, 'dd/MM/yyyy')}`} className={`grid h-7 w-7 place-items-center rounded-full text-xs font-semibold transition hover:bg-primary-light focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary ${dayKey(date) === todayKey ? 'bg-primary text-white shadow-sm' : isSameMonth(date, month) ? 'text-gray-700' : 'text-gray-300'}`}>{format(date, 'd')}</button>
-                <div className="mt-1.5 space-y-1">
+              return <div key={dayKey(date)} className={`relative isolate min-h-20 border-b border-r border-[#f0edf2] p-1.5 transition-colors hover:bg-[#fcfaff] sm:min-h-28 sm:p-2 ${!isSameMonth(date, month) ? 'bg-[#faf9fb]' : ''}`}>
+                <button type="button" onClick={() => setSelectedDate(date)} aria-label={`${t('แสดงเคสวันที่')} ${format(date, 'dd/MM/yyyy')}`} className="absolute inset-0 z-0 rounded-none bg-transparent focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary" />
+                <span aria-hidden="true" className={`pointer-events-none relative z-10 grid h-7 w-7 place-items-center rounded-full text-xs font-semibold ${dayKey(date) === todayKey ? 'bg-primary text-white shadow-sm' : isSameMonth(date, month) ? 'text-gray-700' : 'text-gray-300'}`}>{format(date, 'd')}</span>
+                <div className="pointer-events-none relative z-10 mt-1.5 space-y-1">
                   {daysCases.slice(0, 3).map((item) => {
                     const creatorName = caseCreatorName(item, t('ไม่ระบุชื่อ'));
-                    return <button key={item.id} onClick={() => setSelectedCase(item)} title={`${caseDisplayName(item)} · ${appointmentStatusName(item.appointment_status)} · ${t('ผู้สร้าง')}: ${creatorName} - ${(item.students ?? []).map((student) => student.first_name_th).join(', ')}`} style={{ backgroundColor: creatorColors.get(item.created_by) ?? '#e5e7eb', color: '#2b2132' }} className="block w-full truncate rounded-md px-1.5 py-1 text-left text-[10px] leading-tight sm:text-xs">
+                    return <button key={item.id} onClick={() => setSelectedCase(item)} title={`${caseDisplayName(item)} · ${appointmentStatusName(item.appointment_status)} · ${t('ผู้สร้าง')}: ${creatorName} - ${(item.students ?? []).map((student) => student.first_name_th).join(', ')}`} style={{ backgroundColor: creatorColors.get(item.created_by) ?? '#e5e7eb', color: '#2b2132' }} className="pointer-events-auto block w-full truncate rounded-md px-1.5 py-1 text-left text-[10px] leading-tight sm:text-xs">
                       <span aria-hidden="true" className="mr-1 inline-block h-1.5 w-1.5 rounded-full ring-1 ring-white" style={{ backgroundColor: appointmentStatusIndicatorColors[item.appointment_status] }} />
                       {format(new Date(item.scheduled_at), 'HH:mm')} {caseServiceTypeName(item.service_type)}
                     </button>;
