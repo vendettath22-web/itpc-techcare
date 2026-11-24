@@ -25,8 +25,11 @@ type StudentForm = {
   grade: string;
   room: string;
   gender: string;
+  phone: string;
   academicYear: string;
   photoDataUrl: string;
+  medicalCertificateDataUrl: string;
+  medicalCertificateName: string;
   intakeFormData: StudentIntakeFormData;
 };
 
@@ -50,8 +53,11 @@ function createEmptyStudentForm(academicYear = DEFAULT_ACADEMIC_YEAR): StudentFo
     grade: '',
     room: '',
     gender: '',
+    phone: '',
     academicYear,
     photoDataUrl: '',
+    medicalCertificateDataUrl: '',
+    medicalCertificateName: '',
     intakeFormData: createEmptyStudentIntakeFormData(),
   };
 }
@@ -152,7 +158,7 @@ export default function StudentsPage() {
       return;
     }
     intakeFormData.ageYears = age === null ? '' : String(age);
-    delete intakeFormData.ageMonths;
+    delete intakeFormData.medicalCertificateUrl;
     const studentFormWithAge = { ...studentForm, intakeFormData };
     const displayName = [studentForm.firstNameTh, studentForm.lastNameTh].filter(Boolean).join(' ') || studentForm.studentId || t('นักเรียน');
     if (editingStudent) {
@@ -203,7 +209,6 @@ export default function StudentsPage() {
         ? calculateStudentAge(savedIntakeFormData.dateOfBirth)
         : null;
       savedIntakeFormData.ageYears = age === null ? '' : String(age);
-      delete savedIntakeFormData.ageMonths;
       setStudentForm({
         studentId: student.student_id ?? '',
         firstNameTh: student.first_name_th ?? '',
@@ -212,8 +217,13 @@ export default function StudentsPage() {
         grade: student.grade ?? '',
         room: student.room === null ? '' : String(student.room),
         gender: student.gender ?? '',
+        phone: student.phone ?? '',
         academicYear: student.academic_year,
         photoDataUrl: '',
+        medicalCertificateDataUrl: '',
+        medicalCertificateName: typeof savedIntakeFormData.medicalCertificateName === 'string'
+          ? savedIntakeFormData.medicalCertificateName
+          : '',
         intakeFormData: savedIntakeFormData,
       });
       setShowStudentForm(true);
@@ -451,12 +461,52 @@ export default function StudentsPage() {
             <label className="text-sm text-gray-600">{t('เพศ')}
               <input value={studentForm.gender} onChange={(event) => setStudentForm({ ...studentForm, gender: event.target.value })} className="mt-1 w-full rounded-xl border border-gray-200 px-3 py-2.5" />
             </label>
+            <label className="text-sm text-gray-600">{t('เบอร์โทรนักเรียน')}
+              <input type="tel" value={studentForm.phone} onChange={(event) => setStudentForm({ ...studentForm, phone: event.target.value })} className="mt-1 w-full rounded-xl border border-gray-200 px-3 py-2.5" placeholder="0xx-xxx-xxxx" />
+            </label>
             <label className="text-sm text-gray-600 sm:col-span-2">{t('รูปนักเรียน')}
               <input type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => {
                 const file = event.target.files?.[0];
                 if (file) void prepareProfilePhoto(file).then((photoDataUrl) => setStudentForm((current) => ({ ...current, photoDataUrl }))).catch((photoError: unknown) => setError(photoError instanceof Error ? photoError.message : t('เตรียมรูปภาพไม่สำเร็จ')));
               }} className="mt-1 w-full rounded-xl border border-gray-200 px-3 py-2 text-sm" />
               {(studentForm.photoDataUrl || editingStudent?.profile_photo_url) && <ImagePreview src={studentForm.photoDataUrl || editingStudent?.profile_photo_url || ''} alt="ตัวอย่างรูปนักเรียน" width={72} height={72} className="mt-2 h-[72px] w-[72px] rounded-2xl" />}
+            </label>
+            <label className="text-sm text-gray-600 sm:col-span-2">{t('ใบรับรองแพทย์')}
+              <input
+                type="file"
+                accept="application/pdf,image/jpeg,image/png,image/webp"
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  if (!file) return;
+                  if (file.size > 2 * 1024 * 1024) {
+                    setError(t('ไฟล์ใบรับรองแพทย์ต้องมีขนาดไม่เกิน 2 MB'));
+                    event.target.value = '';
+                    return;
+                  }
+                  const reader = new FileReader();
+                  reader.onload = () => {
+                    const result = reader.result;
+                    if (typeof result === 'string') {
+                      setStudentForm((current) => ({
+                        ...current,
+                        medicalCertificateDataUrl: result,
+                        medicalCertificateName: file.name,
+                      }));
+                    }
+                  };
+                  reader.onerror = () => setError(t('อ่านไฟล์ใบรับรองแพทย์ไม่สำเร็จ'));
+                  reader.readAsDataURL(file);
+                }}
+                className="mt-1 w-full rounded-xl border border-gray-200 px-3 py-2 text-sm"
+              />
+              {(studentForm.medicalCertificateName || (typeof studentForm.intakeFormData.medicalCertificateUrl === 'string')) && (
+                <p className="mt-2 text-xs text-gray-500">
+                  {studentForm.medicalCertificateName || t('ใบรับรองแพทย์ที่บันทึกไว้')}
+                  {!studentForm.medicalCertificateDataUrl && typeof studentForm.intakeFormData.medicalCertificateUrl === 'string' && (
+                    <> · <a href={studentForm.intakeFormData.medicalCertificateUrl} target="_blank" rel="noreferrer" className="text-primary underline">{t('เปิดเอกสาร')}</a></>
+                  )}
+                </p>
+              )}
             </label>
           </div>}
           <div className="grid gap-3 sm:grid-cols-2">
@@ -485,6 +535,19 @@ export default function StudentsPage() {
                       <span>{t(option)}</span>
                     </label>)}
                   </div>
+                  {field.options?.some((option) => option.replace(/\s+/g, '') === 'อื่นๆ' || option === 'อื่น') &&
+                    selectedValues.some((value) => value.replace(/\s+/g, '') === 'อื่นๆ' || value === 'อื่น') && (
+                    <label className="mt-3 block text-sm text-gray-600">
+                      {t('ระบุข้อความอื่น ๆ')}
+                      <input
+                        value={typeof studentForm.intakeFormData[`${field.key}Other`] === 'string'
+                          ? studentForm.intakeFormData[`${field.key}Other`] as string
+                          : ''}
+                        onChange={(event) => updateIntakeField(`${field.key}Other`, event.target.value)}
+                        className="mt-1 w-full rounded-xl border border-gray-200 px-3 py-2.5"
+                      />
+                    </label>
+                  )}
                 </fieldset>;
               }
               return <label key={field.key} className={`text-sm text-gray-600 ${field.type === 'textarea' ? 'sm:col-span-2' : ''}`}>

@@ -24,10 +24,11 @@ export default function CaseFormModal({ onClose, onSaved, caseToEdit }: Props) {
   const [search, setSearch] = useState('');
   const [gradeFilter, setGradeFilter] = useState('');
   const [roomFilter, setRoomFilter] = useState('');
-  const [caseType, setCaseType] = useState<'low_confidence' | 'feel_not_smart' | 'other'>(caseToEdit?.case_type ?? 'low_confidence');
+  const caseType = caseToEdit?.case_type ?? 'low_confidence';
   const [serviceType, setServiceType] = useState<CaseServiceType | null>(caseToEdit?.service_type ?? null);
-  const [otherText, setOtherText] = useState(caseToEdit?.other_text ?? '');
+  const [otherText] = useState(caseToEdit?.other_text ?? '');
   const [details, setDetails] = useState(caseToEdit?.details ?? '');
+  const [location, setLocation] = useState(caseToEdit?.location ?? '');
   const [scheduledAt, setScheduledAt] = useState(() => {
     const date = new Date(caseToEdit?.scheduled_at ?? Date.now());
     date.setTime(date.getTime() - date.getTimezoneOffset() * 60000);
@@ -154,6 +155,7 @@ export default function CaseFormModal({ onClose, onSaved, caseToEdit }: Props) {
           otherText: caseType === 'other' ? otherText.trim() : null,
           details: details.trim() || null,
           scheduledAt: new Date(scheduledAt).toISOString(),
+          location: location.trim() || null,
           studentIds: selectedStudents.map((student) => student.id),
           caretakerIds: selectedCaretakers,
         });
@@ -164,6 +166,7 @@ export default function CaseFormModal({ onClose, onSaved, caseToEdit }: Props) {
           otherText: caseType === 'other' ? otherText.trim() : null,
           details: details.trim() || null,
           scheduledAt: new Date(scheduledAt).toISOString(),
+          location: location.trim() || null,
           createdBy: currentUser.id,
           studentIds: selectedStudents.map((student) => student.id),
           caretakerIds: selectedCaretakers,
@@ -257,19 +260,14 @@ export default function CaseFormModal({ onClose, onSaved, caseToEdit }: Props) {
             </section>
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
-                <label htmlFor="case-type" className="mb-2 block text-sm font-semibold">{t('ประเภทเคส')}</label>
-                <select id="case-type" value={caseType} onChange={(event) => setCaseType(event.target.value as typeof caseType)} className="w-full rounded-xl border border-gray-200 px-3 py-2.5">
-                  <option value="low_confidence">{t('ขาดความมั่นใจ')}</option>
-                  <option value="feel_not_smart">{t('รู้สึกว่าตนเองไม่เก่ง')}</option>
-                  <option value="other">{t('อื่น ๆ')}</option>
-                </select>
-              </div>
-              <div>
                 <label htmlFor="scheduled-at" className="mb-2 block text-sm font-semibold">{t('วันและเวลานัดหมาย')}</label>
                 <input id="scheduled-at" type="datetime-local" required value={scheduledAt} onChange={(event) => setScheduledAt(event.target.value)} className="w-full rounded-xl border border-gray-200 px-3 py-2.5" />
               </div>
             </div>
-            {caseType === 'other' && <div><label htmlFor="other-text" className="mb-2 block text-sm font-semibold">{t('ระบุประเภทเคส')}</label><input id="other-text" required value={otherText} onChange={(event) => setOtherText(event.target.value)} className="w-full rounded-xl border border-gray-200 px-3 py-2.5" /></div>}
+            <div>
+              <label htmlFor="case-location" className="mb-2 block text-sm font-semibold">{t('สถานที่นัดหมาย')}</label>
+              <input id="case-location" value={location} onChange={(event) => setLocation(event.target.value)} className="w-full rounded-xl border border-gray-200 px-3 py-2.5" placeholder={t('เช่น ห้องกิจกรรม, ห้องบำบัด, ออนไลน์')} />
+            </div>
             <div>
               <label htmlFor="details" className="mb-2 block text-sm font-semibold">{t('รายละเอียด')}</label>
               <textarea id="details" rows={3} value={details} onChange={(event) => setDetails(event.target.value)} className="w-full resize-y rounded-xl border border-gray-200 px-3 py-2.5" placeholder={t('ระบุรายละเอียดเบื้องต้น...')} />

@@ -2,47 +2,83 @@
 
 import { useState, type FormEvent } from 'react';
 import Image from 'next/image';
-import { Save } from 'lucide-react';
+import { FileText, Save } from 'lucide-react';
 import { CASE_SERVICE_FORM_SECTIONS, CASE_SERVICE_FORM_TITLES, createInitialCaseServiceFormData, type CaseServiceFormData } from '@/lib/case-service-forms';
 import type { CaseServiceType } from '@/lib/case-services';
 import { useLanguage } from '@/lib/language';
 import type { itpc_takecare_caretakers } from '@/types/database';
 
+export type CaseServiceFormOutcome = 'draft' | 'completed' | 'next_appointment';
+
 type Props = {
   serviceType: CaseServiceType;
   scheduledAt: string;
+  caseStatus: 'planned' | 'done';
+  location: string | null;
+  studentDefaults: { studentAge: string; homeroomTeacher: string };
   initialData: CaseServiceFormData | null;
   caretakers: itpc_takecare_caretakers[];
   saving: boolean;
-  onSave: (formData: CaseServiceFormData) => void;
+  exporting: boolean;
+  feedback: { message: string; tone: 'error' | 'success' } | null;
+  onSave: (formData: CaseServiceFormData, outcome: CaseServiceFormOutcome, nextAppointmentAt?: string) => void;
+  onExport: (formData: CaseServiceFormData, outcome: CaseServiceFormOutcome, nextAppointmentAt?: string) => void;
+  onDirty: () => void;
 };
 
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === 'string');
 }
 
+function toLocalDateTimeValue(value: string): string {
+  const date = new Date(value);
+  date.setTime(date.getTime() - date.getTimezoneOffset() * 60000);
+  return date.toISOString().slice(0, 16);
+}
+
+function localDateTimeValueNow(): string {
+  return toLocalDateTimeValue(new Date().toISOString());
+}
+
 export default function CaseServiceForm({
   serviceType,
   scheduledAt,
+  caseStatus,
+  location,
+  studentDefaults,
   initialData,
   caretakers,
   saving,
+  exporting,
+  feedback,
   onSave,
+  onExport,
+  onDirty,
 }: Props) {
   const { t } = useLanguage();
   const [formData, setFormData] = useState<CaseServiceFormData>(() => ({
     ...createInitialCaseServiceFormData(serviceType, scheduledAt),
+    ...(location ? { location } : {}),
     ...initialData,
+    studentAge: typeof initialData?.studentAge === 'string' && initialData.studentAge
+      ? initialData.studentAge
+      : studentDefaults.studentAge,
+    homeroomTeacher: typeof initialData?.homeroomTeacher === 'string' && initialData.homeroomTeacher
+      ? initialData.homeroomTeacher
+      : studentDefaults.homeroomTeacher,
   }));
+  const [outcome, setOutcome] = useState<CaseServiceFormOutcome>(caseStatus === 'done' ? 'completed' : 'draft');
+  const [nextAppointmentAt, setNextAppointmentAt] = useState(() => toLocalDateTimeValue(scheduledAt));
   const sections = CASE_SERVICE_FORM_SECTIONS[serviceType];
 
   function setValue(id: string, value: string | string[]) {
+    onDirty();
     setFormData((current) => ({ ...current, [id]: value }));
   }
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    onSave(formData);
+    onSave(formData, outcome, outcome === 'next_appointment' ? nextAppointmentAt : undefined);
   }
 
   return (
@@ -151,7 +187,59 @@ export default function CaseServiceForm({
           </div>
         </fieldset>
       ))}
-      <div className="flex justify-end border-t border-gray-100 pt-3">
+      <fieldset className="space-y-3 border-t border-gray-100 pt-4">
+        <legend className="px-1 text-sm font-bold text-primary">{t('สรุปผลเคส')}</legend>
+        <div className="grid gap-2 sm:grid-cols-3">
+          {([
+            ['draft', 'บันทึกแบบร่าง'],
+            ['completed', 'เรียบร้อยแล้ว'],
+            ['next_appointment', 'นัดครั้งต่อไป'],
+          ] as const).map(([value, label]) => (
+            <label key={value} className="flex cursor-pointer items-start gap-2 rounded-xl border border-gray-200 p-3 text-sm text-gray-700">
+              <input
+                type="radio"
+                name="caseServiceOutcome"
+                value={value}
+                checked={outcome === value}
+                onChange={() => {
+                  onDirty();
+                  setOutcome(value);
+                }}
+                className="mt-0.5 accent-primary"
+              />
+              <span>{t(label)}</span>
+            </label>
+          ))}
+        </div>
+        {outcome === 'next_appointment' && (
+          <label className="block max-w-sm text-xs font-semibold text-gray-600">
+            {t('วันและเวลานัดครั้งต่อไป')}
+            <input
+              type="datetime-local"
+              required
+              min={localDateTimeValueNow()}
+              value={nextAppointmentAt}
+              onChange={(event) => {
+                onDirty();
+                setNextAppointmentAt(event.target.value);
+              }}
+              className="mt-1 w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm"
+            />
+          </label>
+        )}
+      </fieldset>
+      <div className="flex flex-wrap justify-end gap-2 border-t border-gray-100 pt-3">
+        {feedback && (
+          <p
+            role={feedback.tone === 'error' ? 'alert' : 'status'}
+            className={`basis-full rounded-xl p-3 text-sm ${feedback.tone === 'error' ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700'}`}
+          >
+            {feedback.message}
+          </p>
+        )}
+        <button type="button" disabled={saving || exporting} onClick={() => onExport(formData, outcome, outcome === 'next_appointment' ? nextAppointmentAt : undefined)} className="flex items-center gap-2 rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-60">
+          <FileText size={16} />{exporting ? t('กำลังเตรียมเอกสารพิมพ์...') : t('พิมพ์ / บันทึกเป็น PDF')}
+        </button>
         <button type="submit" disabled={saving} className="flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-hover disabled:opacity-60">
           <Save size={16} />{saving ? t('กำลังบันทึก...') : t('บันทึกแบบฟอร์มบริการ')}
         </button>

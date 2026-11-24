@@ -38,7 +38,10 @@ npm run dev
 11. รัน migration [20261103000005_app_usage_logs_bangkok_time.sql](./supabase/migrations/20261103000005_app_usage_logs_bangkok_time.sql) เพื่อแปลงเวลาใน log ที่มีอยู่และตั้งค่าเวลาใหม่ให้เก็บเป็นเวลาไทยโดยตรง
 12. รัน migration [20261104000002_rename_supabase_tables.sql](./supabase/migrations/20261104000002_rename_supabase_tables.sql) เพื่อเปลี่ยนชื่อตาราง Supabase เป็น `itpc_takecare_*` โดยคงข้อมูลและความสัมพันธ์เดิมไว้
 13. รัน migration [20261104000003_fix_renamed_table_function_references.sql](./supabase/migrations/20261104000003_fix_renamed_table_function_references.sql) เพื่ออัปเดตฟังก์ชันฐานข้อมูลที่ยังอ้างชื่อตารางเดิม
-14. ตั้งบัญชี admin เริ่มต้นจากบัญชีผู้ดูแลที่มีอยู่แล้ว โดยค้นหา UUID:
+14. รัน migration [20261116000000_student_intake_form.sql](./supabase/migrations/20261116000000_student_intake_form.sql), [20261116000001_case_service_type.sql](./supabase/migrations/20261116000001_case_service_type.sql) และ [20261116000002_case_appointment_and_service_forms.sql](./supabase/migrations/20261116000002_case_appointment_and_service_forms.sql) ตามลำดับ เพื่อเพิ่มแบบบันทึกข้อมูลนักเรียน ประเภทบริการ สถานะนัดหมาย และแบบฟอร์มบริการ
+15. รัน migration [20261123000000_case_location_student_phone_documents.sql](./supabase/migrations/20261123000000_case_location_student_phone_documents.sql) เพื่อเพิ่มสถานที่นัดหมาย เบอร์โทรนักเรียน พื้นที่เก็บใบรับรองแพทย์แบบ private และอนุญาตให้บันทึกแบบฟอร์มบริการก่อนหรือหลังวันนัด
+16. รัน migration [20261124000000_case_service_form_outcome.sql](./supabase/migrations/20261124000000_case_service_form_outcome.sql) เพื่อบันทึกแบบฟอร์มพร้อมสถานะเคสและนัดครั้งถัดไปแบบ atomic
+17. ตั้งบัญชี admin เริ่มต้นจากบัญชีผู้ดูแลที่มีอยู่แล้ว โดยค้นหา UUID:
 
    ```sql
    select id, name
@@ -55,8 +58,8 @@ npm run dev
    where id = 'ใส่-UUID-บัญชีที่เลือก';
    ```
 
-15. เพิ่ม `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` และ `SUPABASE_JWT_SECRET` ใน environment ของเครื่องพัฒนาและระบบ deploy แล้ว restart/redeploy
-16. ทดสอบล็อกอินทั้งบัญชี admin และผู้ดูแล จากนั้นตรวจว่า API ทำงานและแถว `deactivated_at` ไม่ถูกอ่านกลับ
+18. เพิ่ม `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` และ `SUPABASE_JWT_SECRET` ใน environment ของเครื่องพัฒนาและระบบ deploy แล้ว restart/redeploy
+19. ทดสอบล็อกอินทั้งบัญชี admin และผู้ดูแล จากนั้นตรวจว่า API ทำงานและแถว `deactivated_at` ไม่ถูกอ่านกลับ
 
 แอปนี้ให้บริการจาก root path ของโดเมน: API อยู่ที่ `/api/data` และโลโก้อยู่ที่ `/itpc-takecare-logo-v2.png` (ไฟล์ใน `public/` อ้างอิงจาก `/`) โดยไม่ได้กำหนด `basePath` เป็น `/takecare` จึงไม่ต้องตั้งค่า API base URL เพิ่มใน Vercel ให้ตั้ง Root Directory ของโปรเจกต์เป็นโฟลเดอร์นี้ และกำหนด environment variables ด้านบนใน Vercel ก่อน deploy
 
@@ -70,6 +73,8 @@ Migration จะเพิ่ม Role, `deactivated_at` และ `academic_year`
 - PIN เก็บเป็น bcrypt hash; ครูเปลี่ยน PIN เองไม่ได้ และ admin ตั้ง PIN ใหม่ให้ได้โดยระบบไม่เปิดเผย PIN เดิม
 - บันทึกวัน-เวลา ชื่อผู้ใช้ บทบาท และกิจกรรมที่บันทึกสำเร็จใน `itpc_takecare_app_usage_logs`; เวลา `used_at` เก็บเป็นเวลาไทยโดยตรง (timestamp without time zone) ทั้งข้อมูลเก่าและใหม่ โดยไม่เก็บ PIN เนื้อหาบันทึก หรือลายเซ็น
 - รูปโปรไฟล์ผู้ดูแลและนักเรียนเก็บใน Supabase Storage แบบ private และแสดงผ่าน signed URL ที่หมดอายุ
+- การนัดหมายเก็บใน `itpc_takecare_cases` พร้อมวันเวลาและสถานที่; แบบฟอร์มแต่ละเคสเก็บหนึ่งรายการใน `itpc_takecare_case_service_forms.form_data` และบันทึกซ้ำเพื่ออัปเดตข้อมูลเดิมได้
+- เบอร์โทรนักเรียนเก็บในแถวข้อมูลนักเรียน ส่วนไฟล์ใบรับรองแพทย์เก็บใน Storage bucket แบบ private; metadata และ path เชื่อมกับแบบบันทึกนักเรียน และแสดงให้ admin ผ่าน signed URL เท่านั้น
 - การปิดบัญชีหรือนักเรียนบันทึกเวลาใน `deactivated_at` และเก็บแถวเดิมไว้ แต่ RLS/API จะไม่นำข้อมูลที่ปิดแล้วกลับมาในแอป
 - นักเรียนบันทึกแยกตาม `academic_year` (ปี พ.ศ. 4 หลัก) สามารถนำเข้าปีใหม่โดยสร้างแถวใหม่ โดยรหัสนักเรียนซ้ำได้คนละปี
 - ผู้ใช้ที่อ่านข้อมูลผ่าน Supabase ต้องมี role `admin` หรือ `caretaker` ที่ยังเปิดใช้งาน ระบบไม่ใช้ service-role key
@@ -82,4 +87,5 @@ Migration จะเพิ่ม Role, `deactivated_at` และ `academic_year`
 - ปฏิทินเคส สร้างเคส และติดตามเคส
 - รายชื่อนักเรียนแยกตามปีการศึกษา
 - หน้า admin จัดการบัญชีผู้ดูแล
-- Export PDF/Excel ประวัติเคส รวมบันทึกติดตามและลายเซ็น
+- Export PDF/Excel ประวัติเคส รวมแบบฟอร์มบริการ บันทึกติดตาม และลายเซ็น
+- พิมพ์หรือบันทึก PDF แบบฟอร์มบริการ 6 ประเภทด้วยหน้า HTML A4 และฟอนต์ Sarabun; แบบสังเกตพฤติกรรมใช้ pdf-lib วางข้อมูลบน PDF ต้นฉบับ 2 หน้า พร้อมฟอนต์ไทยและตัวเลือกเปิดตารางพิกัดสำหรับตรวจตำแหน่ง

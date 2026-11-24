@@ -2,19 +2,32 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { addDays, addMonths, endOfMonth, format, isSameMonth, parseISO, startOfMonth, startOfWeek } from 'date-fns';
-import { CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Clock3, FileSpreadsheet, Plus } from 'lucide-react';
+import { CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Clock3, FileSpreadsheet, Plus, X } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import * as XLSX from 'xlsx';
 import Navbar from '@/components/Navbar';
 import CaseFormModal from '@/components/CaseFormModal';
 import CaseDetailModal from '@/components/CaseDetailModal';
-import { appointmentStatusName, fetchCases, caseServiceTypeName, caseTypeName } from '@/lib/cases';
+import { appointmentStatusName, fetchCases, caseDisplayName, caseServiceTypeName, studentName } from '@/lib/cases';
 import { useCurrentDateKey, useSessionCaretaker } from '@/lib/session';
 import { useLanguage } from '@/lib/language';
 import type { itpc_takecare_cases } from '@/types/database';
 
 function dayKey(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+const appointmentStatusIndicatorColors = {
+  scheduled: '#b5673d',
+  attended: '#4d8053',
+  no_show: '#b34d4d',
+  rescheduled: '#345d94',
+} as const;
+
+function caseCreatorName(caseItem: itpc_takecare_cases, fallback: string): string {
+  return caseItem.created_by_name ||
+    caseItem.caretakers?.find((caretaker) => caretaker.id === caseItem.created_by)?.name ||
+    fallback;
 }
 
 export default function Home() {
@@ -26,9 +39,10 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [monthOverride, setMonthOverride] = useState<string | null>(null);
-  const [showAll, setShowAll] = useState(false);
+  const [showAll, setShowAll] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [selectedCase, setSelectedCase] = useState<itpc_takecare_cases | null>(null);
+  const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [exporting, setExporting] = useState(false);
   const monthKey = monthOverride ?? todayKey.slice(0, 7);
   const month = parseISO(`${monthKey}-01`);
@@ -55,7 +69,8 @@ export default function Home() {
   }, [loadCases, router, user]);
 
   const visibleCases = useMemo(() => {
-    if (showAll || !user) return cases;
+    if (!user) return [];
+    if (user.role === 'admin' && showAll) return cases;
     return cases.filter((item) => item.caretakers?.some((caretaker) => caretaker.id === user.id));
   }, [cases, showAll, user]);
 
@@ -63,6 +78,46 @@ export default function Home() {
     () => visibleCases.filter((item) => format(new Date(item.scheduled_at), 'yyyy-MM') === monthKey),
     [monthKey, visibleCases],
   );
+  const selectedDateCases = useMemo(
+    () => selectedDate
+      ? visibleCases
+        .filter((item) => dayKey(new Date(item.scheduled_at)) === dayKey(selectedDate))
+        .sort((first, second) => first.scheduled_at.localeCompare(second.scheduled_at))
+      : [],
+    [selectedDate, visibleCases],
+  );
+  const creatorColors = useMemo(() => {
+    const firstCaseByCreator = new Map<string, string>();
+    for (const item of cases) {
+      if (!item.created_by) continue;
+      const currentFirstCase = firstCaseByCreator.get(item.created_by);
+      if (!currentFirstCase || item.created_at < currentFirstCase) {
+        firstCaseByCreator.set(item.created_by, item.created_at);
+      }
+    }
+
+    const creators = [...firstCaseByCreator.entries()]
+      .sort(([firstId, firstDate], [secondId, secondDate]) => firstDate.localeCompare(secondDate) || firstId.localeCompare(secondId));
+    return new Map(creators.map(([id], index) => [
+      id,
+      `hsl(${((index * 137.508) % 360).toFixed(2)} 72% 76%)`,
+    ]));
+  }, [cases]);
+  const monthCreatorLegend = useMemo(() => {
+    const creators = new Map<string, { name: string; color: string }>();
+    for (const item of monthCases) {
+      if (!item.created_by || creators.has(item.created_by)) continue;
+      const name = item.created_by_name || item.caretakers?.find((caretaker) => caretaker.id === item.created_by)?.name;
+      if (!name) continue;
+      creators.set(item.created_by, {
+        name,
+        color: creatorColors.get(item.created_by) ?? '#6b7280',
+      });
+    }
+    return [...creators.entries()]
+      .map(([id, creator]) => ({ id, ...creator }))
+      .sort((first, second) => first.name.localeCompare(second.name));
+  }, [creatorColors, monthCases]);
 
   function exportCalendarExcel() {
     setExporting(true);
@@ -74,7 +129,7 @@ export default function Home() {
         [t('ปฏิทินเคส ITPC Takecare')],
         [t('เดือนที่แสดง'), new Intl.DateTimeFormat(language === 'th' ? 'th-TH' : 'en-US', { month: 'long', year: 'numeric' }).format(month)],
         [t('ผู้ส่งออก'), user?.name ?? '-'],
-        [t('ขอบเขตข้อมูล'), t(showAll ? 'เคสทั้งหมดที่มีสิทธิ์เข้าถึง' : 'เคสที่ผู้ดูแลรับผิดชอบ')],
+        [t('ขอบเขตข้อมูล'), t(showAll && user?.role === 'admin' ? 'เคสทั้งหมดที่มีสิทธิ์เข้าถึง' : 'เคสที่ผู้ดูแลรับผิดชอบ')],
         [t('จำนวนเคสในเดือน'), monthCases.length],
         [t('นัดหมายแล้ว'), monthCases.filter((item) => item.appointment_status === 'scheduled' || item.appointment_status === 'rescheduled').length],
         [t('มาตามนัด'), monthCases.filter((item) => item.appointment_status === 'attended').length],
@@ -84,10 +139,9 @@ export default function Home() {
       const caseRows = monthCases.map((item) => ({
         [t('วันนัดหมาย')]: format(new Date(item.scheduled_at), 'dd/MM/yyyy'),
         [t('เวลา')]: format(new Date(item.scheduled_at), 'HH:mm'),
-        [t('ประเภทเคส')]: t(caseTypeName(item)),
-        [t('บริการ')]: t(caseServiceTypeName(item.service_type)),
+        [t('แบบฟอร์มบริการ')]: t(caseDisplayName(item)),
         [t('สถานะนัดหมาย')]: t(appointmentStatusName(item.appointment_status)),
-        [t('สถานะบริการ')]: t(item.status === 'done' ? 'เสร็จสิ้น' : 'ยังไม่เสร็จสิ้น'),
+        [t('สถานะเคส')]: t(item.status === 'done' ? 'เสร็จสิ้น' : 'ยังไม่เสร็จสิ้น'),
         [t('รายละเอียด')]: item.details || '',
         [t('นักเรียน')]: item.students?.map((student) => `${student.first_name_th ?? ''} ${student.last_name_th ?? ''}`.trim() || t('ไม่ระบุชื่อ')).join(', ') || '-',
         [t('รหัสนักเรียน')]: item.students?.map((student) => student.student_id || '-').join(', ') || '-',
@@ -99,8 +153,7 @@ export default function Home() {
       const studentRows = monthCases.flatMap((item) => (item.students ?? []).map((student) => ({
         [t('วันนัดหมาย')]: format(new Date(item.scheduled_at), 'dd/MM/yyyy'),
         [t('เวลา')]: format(new Date(item.scheduled_at), 'HH:mm'),
-        [t('ประเภทเคส')]: t(caseTypeName(item)),
-        [t('บริการ')]: t(caseServiceTypeName(item.service_type)),
+        [t('แบบฟอร์มบริการ')]: t(caseDisplayName(item)),
         [t('ชื่อนักเรียน')]: [student.first_name_th, student.last_name_th].filter(Boolean).join(' ') || t('ไม่ระบุชื่อ'),
         [t('ชื่อเล่น')]: student.nickname_th || '-',
         [t('รหัสนักเรียน')]: student.student_id || '-',
@@ -155,10 +208,10 @@ export default function Home() {
             <h1 className="mt-2 text-2xl font-bold tracking-tight text-[#2b2132] sm:text-3xl">{t('ปฏิทินเคส')}</h1>
             <p className="mt-1.5 text-sm text-gray-500">{t('สวัสดี')}, {user?.name} · {t('ติดตามการนัดหมายและความคืบหน้า')}</p>
           </div>
-          <label className="flex cursor-pointer items-center gap-2.5 rounded-xl border border-[#ebe4ef] bg-white px-4 py-2.5 text-sm font-medium text-gray-600 shadow-sm transition hover:border-[#d6c3e0]">
+          {user.role === 'admin' && <label className="flex cursor-pointer items-center gap-2.5 rounded-xl border border-[#ebe4ef] bg-white px-4 py-2.5 text-sm font-medium text-gray-600 shadow-sm transition hover:border-[#d6c3e0]">
             <input type="checkbox" checked={showAll} onChange={(event) => setShowAll(event.target.checked)} className="h-4 w-4 accent-primary" />
             {t('แสดงเคสทั้งหมด')}
-          </label>
+          </label>}
         </div>
         <div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {[
@@ -196,21 +249,69 @@ export default function Home() {
             {calendarDays.map((date) => {
               const daysCases = visibleCases.filter((item) => dayKey(new Date(item.scheduled_at)) === dayKey(date));
               return <div key={dayKey(date)} className={`min-h-20 border-b border-r border-[#f0edf2] p-1.5 transition-colors hover:bg-[#fcfaff] sm:min-h-28 sm:p-2 ${!isSameMonth(date, month) ? 'bg-[#faf9fb]' : ''}`}>
-                <span className={`grid h-7 w-7 place-items-center rounded-full text-xs font-semibold ${dayKey(date) === todayKey ? 'bg-primary text-white shadow-sm' : isSameMonth(date, month) ? 'text-gray-700' : 'text-gray-300'}`}>{format(date, 'd')}</span>
+                <button type="button" onClick={() => setSelectedDate(date)} aria-label={`${t('แสดงเคสวันที่')} ${format(date, 'dd/MM/yyyy')}`} className={`grid h-7 w-7 place-items-center rounded-full text-xs font-semibold transition hover:bg-primary-light focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary ${dayKey(date) === todayKey ? 'bg-primary text-white shadow-sm' : isSameMonth(date, month) ? 'text-gray-700' : 'text-gray-300'}`}>{format(date, 'd')}</button>
                 <div className="mt-1.5 space-y-1">
-                  {daysCases.slice(0, 3).map((item) => <button key={item.id} onClick={() => setSelectedCase(item)} title={`${caseTypeName(item)} · ${caseServiceTypeName(item.service_type)} · ${appointmentStatusName(item.appointment_status)} - ${(item.students ?? []).map((student) => student.first_name_th).join(', ')}`} className={`block w-full truncate rounded-md px-1.5 py-1 text-left text-[10px] leading-tight sm:text-xs ${item.appointment_status === 'attended' ? 'bg-pastel-mint text-[#38583c]' : item.appointment_status === 'no_show' ? 'bg-[#fde8e8] text-[#8e3636]' : item.appointment_status === 'rescheduled' ? 'bg-[#e8f0fd] text-[#345d94]' : 'bg-pastel-peach text-[#80533b]'}`}>
-                    {format(new Date(item.scheduled_at), 'HH:mm')} {caseServiceTypeName(item.service_type)}
-                  </button>)}
+                  {daysCases.slice(0, 3).map((item) => {
+                    const creatorName = caseCreatorName(item, t('ไม่ระบุชื่อ'));
+                    return <button key={item.id} onClick={() => setSelectedCase(item)} title={`${caseDisplayName(item)} · ${appointmentStatusName(item.appointment_status)} · ${t('ผู้สร้าง')}: ${creatorName} - ${(item.students ?? []).map((student) => student.first_name_th).join(', ')}`} style={{ backgroundColor: creatorColors.get(item.created_by) ?? '#e5e7eb', color: '#2b2132' }} className="block w-full truncate rounded-md px-1.5 py-1 text-left text-[10px] leading-tight sm:text-xs">
+                      <span aria-hidden="true" className="mr-1 inline-block h-1.5 w-1.5 rounded-full ring-1 ring-white" style={{ backgroundColor: appointmentStatusIndicatorColors[item.appointment_status] }} />
+                      {format(new Date(item.scheduled_at), 'HH:mm')} {caseServiceTypeName(item.service_type)}
+                    </button>;
+                  })}
                   {daysCases.length > 3 && <p className="pl-1 text-[10px] text-gray-500">{language === 'th' ? `อีก ${daysCases.length - 3} เคส` : `${daysCases.length - 3} more`}</p>}
                 </div>
               </div>;
             })}
           </div>
-          <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 px-1 text-xs text-gray-500"><span className="flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-full bg-pastel-peach" />{t('นัดหมายแล้ว')}</span><span className="flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-full bg-pastel-mint" />{t('มาตามนัด')}</span><span className="flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-full bg-[#fde8e8]" />{t('ไม่มาตามนัด')}</span><span className="flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-full bg-[#e8f0fd]" />{t('เลื่อนนัด')}</span><span className="ml-auto rounded-full bg-[#f7f3f9] px-3 py-1 font-semibold text-[#594563]">{visibleCases.length} {language === 'th' ? 'เคส' : 'cases'}</span></div>
+          <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 px-1 text-xs text-gray-500">
+            <span className="flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: appointmentStatusIndicatorColors.scheduled }} />{t('นัดหมายแล้ว')}</span>
+            <span className="flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: appointmentStatusIndicatorColors.attended }} />{t('มาตามนัด')}</span>
+            <span className="flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: appointmentStatusIndicatorColors.no_show }} />{t('ไม่มาตามนัด')}</span>
+            <span className="flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: appointmentStatusIndicatorColors.rescheduled }} />{t('เลื่อนนัด')}</span>
+            <span className="ml-auto rounded-full bg-[#f7f3f9] px-3 py-1 font-semibold text-[#594563]">{visibleCases.length} {language === 'th' ? 'เคส' : 'cases'}</span>
+          </div>
+          {monthCreatorLegend.length > 0 && <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2 px-1 text-xs text-gray-500">
+            <span className="font-semibold">{t('ผู้สร้าง')}:</span>
+            {monthCreatorLegend.map((creator) => <span key={creator.id} className="inline-flex items-center gap-1.5">
+              <span aria-hidden="true" className="h-2.5 w-2.5 rounded-sm" style={{ backgroundColor: creator.color }} />
+              {creator.name}
+            </span>)}
+          </div>}
         </div>
       </section>
       <button aria-label={t('สร้างเคสใหม่')} onClick={() => setShowForm(true)} className="fixed bottom-6 right-6 z-30 grid h-14 w-14 place-items-center rounded-2xl bg-primary text-white shadow-[0_10px_26px_rgba(112,65,138,0.35)] transition hover:-translate-y-1 hover:bg-primary-hover sm:bottom-8 sm:right-8"><Plus size={27} /></button>
       {showForm && <CaseFormModal onClose={() => setShowForm(false)} onSaved={() => void loadCases()} />}
+      {selectedDate && <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-3 sm:p-6" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelectedDate(null); }}>
+        <section role="dialog" aria-modal="true" aria-labelledby="calendar-date-cases-title" className="max-h-[85vh] w-full max-w-xl overflow-hidden rounded-3xl bg-white shadow-2xl">
+          <div className="flex items-start justify-between gap-3 border-b border-gray-100 p-5">
+            <div>
+              <h2 id="calendar-date-cases-title" className="text-lg font-bold text-gray-800">
+                {new Intl.DateTimeFormat(language === 'th' ? 'th-TH' : 'en-US', { dateStyle: 'full' }).format(selectedDate)}
+              </h2>
+              <p className="mt-1 text-sm text-gray-500">{selectedDateCases.length} {t('เคส')}</p>
+            </div>
+            <button type="button" onClick={() => setSelectedDate(null)} aria-label={t('ปิด')} className="rounded-full p-2 text-gray-500 transition hover:bg-gray-100"><X size={20} /></button>
+          </div>
+          <div className="max-h-[65vh] space-y-2 overflow-y-auto p-4 sm:p-5">
+            {selectedDateCases.length === 0
+              ? <p className="py-8 text-center text-sm text-gray-500">{t('ไม่มีเคสในวันนี้')}</p>
+              : selectedDateCases.map((item) => <button
+                key={item.id}
+                type="button"
+                onClick={() => { setSelectedDate(null); setSelectedCase(item); }}
+                className="flex w-full items-start justify-between gap-3 rounded-xl border border-gray-100 border-l-4 bg-white p-3 text-left transition hover:bg-[#faf8fc]"
+                style={{ borderLeftColor: creatorColors.get(item.created_by) ?? '#9ca3af' }}
+              >
+                <span className="min-w-0">
+                  <span className="block truncate text-sm font-semibold text-gray-800">{format(new Date(item.scheduled_at), 'HH:mm')} · {caseDisplayName(item)}</span>
+                  <span className="mt-1 block truncate text-xs text-gray-600">{t('นักเรียน')}: {(item.students ?? []).map(studentName).join(', ') || t('ไม่ระบุ')}</span>
+                  <span className="mt-1 block truncate text-xs text-gray-500">{t('ผู้สร้าง')}: {caseCreatorName(item, t('ไม่ระบุชื่อ'))}</span>
+                </span>
+                <span className="shrink-0 rounded-full bg-gray-50 px-2 py-1 text-xs text-gray-600">{t(appointmentStatusName(item.appointment_status))}</span>
+              </button>)}
+          </div>
+        </section>
+      </div>}
       {selectedCase && <CaseDetailModal caseItem={selectedCase} onClose={() => setSelectedCase(null)} onUpdated={() => void loadCases()} />}
     </main>
   );

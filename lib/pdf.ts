@@ -12,11 +12,18 @@ export function downloadPdfBlob(blob: Blob, filename: string): void {
   const link = document.createElement('a');
   link.href = url;
   link.download = `${safeFilename(filename)}.pdf`;
+  link.style.display = 'none';
+  document.body.append(link);
   link.click();
+  link.remove();
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-export async function createThaiPdfBlob(title: string, content: string): Promise<Blob> {
+export async function createThaiPdfBlob(
+  title: string,
+  content: string,
+  logoPath = LOGO_PATH,
+): Promise<Blob> {
   const report = document.createElement('div');
   report.style.cssText = 'position:fixed;left:0;top:0;width:794px;background:#ffffff;opacity:0;pointer-events:none;z-index:-1;';
   report.innerHTML = `
@@ -69,7 +76,7 @@ export async function createThaiPdfBlob(title: string, content: string): Promise
     </style>
     <article class="pdf-report">
       <header class="pdf-brand">
-        <img src="${LOGO_PATH}" alt="ITPC Takecare">
+        <img src="${logoPath}" alt="ITPC Takecare">
       </header>
       <h1>${title}</h1>
       ${content}
@@ -94,25 +101,46 @@ export async function createThaiPdfBlob(title: string, content: string): Promise
       },
     });
     if (!canvas.width || !canvas.height) throw new Error('ไม่สามารถสร้างภาพรายงานได้');
-    const pageWidth = 210;
-    const pageHeight = 297;
+    const pageWidth = 190;
+    const pageHeight = 281;
+    const pageMarginX = 10;
+    const pageMarginY = 8;
     const pdf = new jsPDF({
       orientation: 'portrait',
       unit: 'mm',
       format: 'a4',
       compress: true,
     });
-    const fitScale = Math.min(pageWidth / canvas.width, pageHeight / canvas.height);
-    const imageWidth = canvas.width * fitScale;
-    const imageHeight = canvas.height * fitScale;
-    pdf.addImage(
-      canvas.toDataURL('image/jpeg', 0.94),
-      'JPEG',
-      (pageWidth - imageWidth) / 2,
-      8,
-      imageWidth,
-      imageHeight,
-    );
+    const scale = pageWidth / canvas.width;
+    const sourcePageHeight = Math.floor(pageHeight / scale);
+    for (let sourceY = 0; sourceY < canvas.height; sourceY += sourcePageHeight) {
+      if (sourceY > 0) pdf.addPage();
+      const sliceHeight = Math.min(sourcePageHeight, canvas.height - sourceY);
+      const pageCanvas = document.createElement('canvas');
+      pageCanvas.width = canvas.width;
+      pageCanvas.height = sliceHeight;
+      const context = pageCanvas.getContext('2d');
+      if (!context) throw new Error('ไม่สามารถแบ่งหน้ารายงานได้');
+      context.drawImage(
+        canvas,
+        0,
+        sourceY,
+        canvas.width,
+        sliceHeight,
+        0,
+        0,
+        canvas.width,
+        sliceHeight,
+      );
+      pdf.addImage(
+        pageCanvas.toDataURL('image/jpeg', 0.94),
+        'JPEG',
+        pageMarginX,
+        pageMarginY,
+        pageWidth,
+        sliceHeight * scale,
+      );
+    }
     return pdf.output('blob');
   } finally {
     report.remove();

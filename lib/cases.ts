@@ -32,6 +32,12 @@ export function caseTypeName(caseItem: Pick<itpc_takecare_cases, 'case_type' | '
   return caseItem.other_text || 'อื่น ๆ';
 }
 
+export function caseDisplayName(
+  caseItem: Pick<itpc_takecare_cases, 'case_type' | 'other_text' | 'service_type'>,
+): string {
+  return caseItem.service_type ? caseServiceTypeName(caseItem.service_type) : caseTypeName(caseItem);
+}
+
 export function caseServiceTypeName(serviceType: CaseServiceType | null | undefined): string {
   return caseServiceName(serviceType) ?? 'ยังไม่ระบุบริการ';
 }

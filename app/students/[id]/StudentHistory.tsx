@@ -7,21 +7,36 @@ import { ArrowLeft, Download, FileSpreadsheet, FileText, X } from 'lucide-react'
 import ImagePreview from '@/components/ImagePreview';
 import * as XLSX from 'xlsx';
 import Navbar from '@/components/Navbar';
-import { appointmentStatusName, caseServiceTypeName, caseTypeName, fetchCases, formatThaiDate, studentGradeRoom, studentName } from '@/lib/cases';
-import { escapeHtml, useSessionCaretaker } from '@/lib/session';
-import { createStudentReportDocument } from '@/lib/student-report';
+import { appointmentStatusName, caseDisplayName, caseServiceTypeName, fetchCases, formatThaiDate, studentName } from '@/lib/cases';
+import { useSessionCaretaker } from '@/lib/session';
 import { requestApi } from '@/lib/api';
 import { useLanguage } from '@/lib/language';
-import type { itpc_takecare_cases, itpc_takecare_case_signatures, itpc_takecare_case_updates, itpc_takecare_students } from '@/types/database';
+import { CASE_SERVICE_FORM_SECTIONS } from '@/lib/case-service-forms';
+import { createStudentRecordPdfBlob } from '@/lib/student-record-pdf';
+import type { CaseServiceFormData } from '@/lib/case-service-forms';
+import type { StudentIntakeFormData } from '@/lib/student-intake-form';
+import type { itpc_takecare_cases, itpc_takecare_case_service_forms, itpc_takecare_case_signatures, itpc_takecare_case_updates, itpc_takecare_students } from '@/types/database';
 
-function studentGenderInThai(gender: string | null): string {
-  if (!gender?.trim()) return '-';
-  const normalized = gender.trim().toLocaleLowerCase();
-  if (['girl', 'female', 'f', 'หญิง'].includes(normalized)) return 'หญิง';
-  if (['boy', 'male', 'm', 'ชาย'].includes(normalized)) return 'ชาย';
-  if (['other', 'others', 'non-binary', 'nonbinary', 'อื่น', 'อื่นๆ'].includes(normalized)) return 'อื่นๆ';
-  if (['unknown', 'unspecified', 'prefer not to say', 'ไม่ระบุ'].includes(normalized)) return 'ไม่ระบุ';
-  return gender.trim();
+function serviceFormSections(serviceType: NonNullable<itpc_takecare_cases['service_type']>, formData: CaseServiceFormData) {
+  return CASE_SERVICE_FORM_SECTIONS[serviceType]
+    .map((section) => ({
+      title: section.title,
+      fields: section.fields
+        .flatMap((field) => {
+          const value = formData[field.id];
+          const otherValue = formData[`${field.id}Other`];
+          const entries = [{
+            label: field.label,
+            value: Array.isArray(value) ? value.join(', ') : value ?? '',
+          }];
+          if (typeof otherValue === 'string' && otherValue.trim()) {
+            entries.push({ label: 'ระบุรายละเอียดอื่น ๆ', value: otherValue });
+          }
+          return entries;
+        })
+        .filter((field) => field.value.trim()),
+    }))
+    .filter((section) => section.fields.length);
 }
 
 export default function StudentHistory({ id }: { id: string }) {
@@ -29,6 +44,7 @@ export default function StudentHistory({ id }: { id: string }) {
   const user = useSessionCaretaker();
   const { t } = useLanguage();
   const [student, setStudent] = useState<itpc_takecare_students | null>(null);
+  const [studentIntake, setStudentIntake] = useState<StudentIntakeFormData | null>(null);
   const [cases, setCases] = useState<itpc_takecare_cases[]>([]);
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
@@ -38,19 +54,23 @@ export default function StudentHistory({ id }: { id: string }) {
   const pdfPreviewFrame = useRef<HTMLIFrameElement>(null);
 
   const loadHistory = useCallback(async () => {
-    const [studentResult, allCases] = await Promise.all([
+    const [studentResult, allCases, intakeResult] = await Promise.all([
       requestApi<itpc_takecare_students | null>('getStudent', { id }).then((data) => ({ data, error: null })).catch((loadError: unknown) => ({ data: null, error: loadError })),
       fetchCases().then((data) => ({ data, error: null })).catch((loadError: unknown) => ({ data: null, error: loadError })),
+      user?.role === 'admin'
+        ? requestApi<StudentIntakeFormData>('getStudentIntakeForm', { id }).then((data) => ({ data, error: null })).catch((loadError: unknown) => ({ data: null, error: loadError }))
+        : Promise.resolve({ data: null, error: null }),
     ]);
-    const loadError = studentResult.error ?? allCases.error;
+    const loadError = studentResult.error ?? allCases.error ?? intakeResult.error;
     if (loadError) setError(`${t('โหลดประวัตินักเรียนไม่สำเร็จ')}: ${loadError instanceof Error ? loadError.message : t('เกิดข้อผิดพลาดที่ไม่ทราบสาเหตุ')}`);
     else {
       setError('');
       setStudent(studentResult.data);
+      setStudentIntake(intakeResult.data);
       setCases((allCases.data ?? []).filter((caseItem) => caseItem.students?.some((item) => item.id === id)));
     }
     setLoading(false);
-  }, [id, t]);
+  }, [id, t, user?.role]);
 
   useEffect(() => {
     if (user === undefined) return;
@@ -75,6 +95,7 @@ export default function StudentHistory({ id }: { id: string }) {
         updates: itpc_takecare_case_updates[];
         signatures: itpc_takecare_case_signatures[];
         caretakers: { id: string; name: string }[];
+        serviceForm: itpc_takecare_case_service_forms | null;
       }>('caseDetails', { caseId: caseItem.id }),
     })));
   }
@@ -84,63 +105,30 @@ export default function StudentHistory({ id }: { id: string }) {
     setExporting(true);
     setError('');
     try {
-      const history = await loadExportDetails();
-      const studentGender = studentGenderInThai(student.gender);
-      const html = `<p class="pdf-muted">${escapeHtml(t('จัดทำเมื่อ'))} ${escapeHtml(formatThaiDate(new Date().toISOString()))}</p>
-        <section class="pdf-student-profile">
-          ${student.profile_photo_url ? `<img class="pdf-student-photo" src="${escapeHtml(student.profile_photo_url)}" alt="${escapeHtml(t('รูปนักเรียน'))}">` : ''}
-          <div class="pdf-student-heading">
-            <p class="pdf-student-kicker">${escapeHtml(t('ข้อมูลนักเรียนและประวัติรายบุคคล'))}</p>
-            <div class="pdf-student-grid">
-              <div class="pdf-info-item pdf-info-item-wide"><span>${escapeHtml(t('ชื่อ-สกุล'))}</span><strong>${escapeHtml(studentName(student))}</strong></div>
-              <div class="pdf-info-item pdf-info-item-wide"><span>${escapeHtml(t('ชื่อเล่น'))}</span><strong>${escapeHtml(student.nickname_th || '-')}</strong></div>
-              <div class="pdf-info-item"><span>${escapeHtml(t('รหัสนักเรียน'))}</span><strong>${escapeHtml(student.student_id || '-')}</strong></div>
-              <div class="pdf-info-item"><span>${escapeHtml(t('ระดับชั้น/ห้อง'))}</span><strong>${escapeHtml(studentGradeRoom(student.grade, student.room))}</strong></div>
-              <div class="pdf-info-item"><span>${escapeHtml(t('เพศ'))}</span><strong>${escapeHtml(studentGender)}</strong></div>
-              <div class="pdf-info-item"><span>${escapeHtml(t('ปีการศึกษา'))}</span><strong>${escapeHtml(student.academic_year)}</strong></div>
-            </div>
-          </div>
-        </section>
-        <h2 class="pdf-section-heading">${escapeHtml(t('ประวัติเคส'))}</h2>
-        ${history.map(({ caseItem, details }) => {
-          const namesById = Object.fromEntries(details.caretakers.map((caretaker) => [caretaker.id, caretaker.name]));
-          return `<article class="pdf-case-card">
-            <header class="pdf-case-header">
-              <div><h3 class="pdf-case-title">${escapeHtml(t(caseTypeName(caseItem)))}</h3><p class="pdf-case-date">${escapeHtml(t('วันนัดหมาย:'))} ${escapeHtml(formatThaiDate(caseItem.scheduled_at))}</p></div>
-              <span class="pdf-status ${caseItem.appointment_status === 'attended' ? 'pdf-status-done' : 'pdf-status-planned'}">${escapeHtml(t(appointmentStatusName(caseItem.appointment_status)))}</span>
-            </header>
-            <div class="pdf-case-details">
-              <p><b>${escapeHtml(t('วันที่สร้างเคส:'))}</b> ${escapeHtml(formatThaiDate(caseItem.created_at))}</p>
-              <p><b>${escapeHtml(t('สถานะบริการ:'))}</b> ${escapeHtml(t(caseItem.status === 'done' ? 'เสร็จสิ้น' : 'ยังไม่เสร็จสิ้น'))}</p>
-              <p><b>${escapeHtml(t('บริการ:'))}</b> ${escapeHtml(t(caseServiceTypeName(caseItem.service_type)))}</p>
-              <p><b>${escapeHtml(t('ผู้สร้าง:'))}</b> ${escapeHtml(namesById[caseItem.created_by] || '-')}</p>
-              <p class="pdf-full-width"><b>${escapeHtml(t('ผู้ดูแล:'))}</b> ${escapeHtml(caseItem.caretakers?.map((caretaker) => caretaker.name).join(', ') || '-')}</p>
-            </div>
-            <p class="pdf-case-description"><b>${escapeHtml(t('รายละเอียด:'))}</b> ${escapeHtml(caseItem.details || '-')}</p>
-            <h3 class="pdf-case-section-title">${escapeHtml(t('บันทึกติดตาม'))}</h3>
-            ${details.updates.map((update) => `<div class="pdf-update">
-              <p><b>${escapeHtml(t('ผู้บันทึก:'))}</b> ${escapeHtml(namesById[update.caretaker_id] || t('ผู้ดูแล'))} · <b>${escapeHtml(t('วันเวลาที่บันทึก:'))}</b> ${escapeHtml(formatThaiDate(update.created_at))}</p>
-              <p><b>${escapeHtml(t('กิจกรรม:'))}</b> ${escapeHtml(update.activity_note)}</p>
-              ${update.result_note ? `<p><b>${escapeHtml(t('ผลลัพธ์:'))}</b> ${escapeHtml(update.result_note)}</p>` : ''}
-              ${update.next_step ? `<p><b>${escapeHtml(t('ขั้นตอนถัดไป:'))}</b> ${escapeHtml(update.next_step)}</p>` : ''}
-            </div>`).join('') || `<p class="pdf-empty">${escapeHtml(t('ยังไม่มีบันทึกติดตาม'))}</p>`}
-            <section class="pdf-signatures">
-              <h3 class="pdf-case-section-title">${escapeHtml(t('ลายเซ็น'))}</h3>
-              <div class="pdf-signature-list">${details.signatures.map((signature) => `<div class="pdf-card pdf-signature-card">
-              <div class="pdf-signature-block">
-                <img class="pdf-signature" src="${escapeHtml(signature.signature_data)}" alt="ลายเซ็น ${escapeHtml(signature.signer_name)}">
-                <div class="pdf-signature-name">(${escapeHtml(signature.signer_name)})</div>
-                <div class="pdf-signature-role">${escapeHtml(signature.signer_role)}</div>
-                <div class="pdf-signature-date">${escapeHtml(formatThaiDate(signature.signed_at))}</div>
-              </div>
-              </div>`).join('') || `<p class="pdf-empty">${escapeHtml(t('ยังไม่มีลายเซ็น'))}</p>`}</div>
-            </section>
-          </article>`;
-        }).join('') || `<p class="pdf-empty">${escapeHtml(t('ยังไม่มีประวัติเคส'))}</p>`}`;
-      const safeName = (student.student_id || student.id).replace(/[<>:"/\\|?*]/g, '_');
-      const title = `${t('รายงานประวัติการดูแลนักเรียน')} ${safeName}`;
-      const logoUrl = new URL('/itpc-takecare-logo-v2.png', window.location.origin).href;
-      const blob = new Blob([createStudentReportDocument(title, html, logoUrl)], { type: 'text/html' });
+      const [templateResponse, fontResponse] = await Promise.all([
+        fetch('/case-service-templates/00แบบบันทึกข้อมูลนักเรียน.pdf'),
+        fetch('/fonts/Sarabun-Regular.ttf'),
+      ]);
+      if (!templateResponse.ok) throw new Error(`โหลดแบบฟอร์มต้นฉบับไม่สำเร็จ (${templateResponse.status})`);
+      if (!fontResponse.ok) throw new Error(`โหลดฟอนต์ภาษาไทยไม่สำเร็จ (${fontResponse.status})`);
+      const [templateBytes, fontBytes] = await Promise.all([
+        templateResponse.arrayBuffer().then((bytes) => new Uint8Array(bytes)),
+        fontResponse.arrayBuffer().then((bytes) => new Uint8Array(bytes)),
+      ]);
+      const blob = await createStudentRecordPdfBlob(
+        templateBytes,
+        fontBytes,
+        studentIntake ?? {},
+        {
+          name: studentName(student),
+          nickname: student.nickname_th ?? '',
+          studentId: student.student_id ?? '',
+          grade: student.grade ?? '',
+          room: student.room === null ? '' : String(student.room),
+          phone: student.phone ?? '',
+          photoUrl: student.profile_photo_url,
+        },
+      );
       const previewUrl = URL.createObjectURL(blob);
       setPdfPreviewReady(false);
       setPdfPreviewUrl(previewUrl);
@@ -183,11 +171,11 @@ export default function StudentHistory({ id }: { id: string }) {
       const caseRows = history.map(({ caseItem, details }) => ({
         [t('รหัสเคส')]: caseItem.id,
         [t('วันที่นัดหมาย')]: formatThaiDate(caseItem.scheduled_at),
+        [t('สถานที่นัดหมาย')]: caseItem.location ?? '',
         [t('วันที่สร้าง')]: formatThaiDate(caseItem.created_at),
-        [t('ประเภทเคส')]: t(caseTypeName(caseItem)),
-        [t('บริการ')]: t(caseServiceTypeName(caseItem.service_type)),
+        [t('แบบฟอร์มบริการ')]: t(caseDisplayName(caseItem)),
         [t('สถานะนัดหมาย')]: t(appointmentStatusName(caseItem.appointment_status)),
-        [t('สถานะบริการ')]: t(caseItem.status === 'done' ? 'เสร็จสิ้น' : 'ยังไม่เสร็จสิ้น'),
+        [t('สถานะเคส')]: t(caseItem.status === 'done' ? 'เสร็จสิ้น' : 'ยังไม่เสร็จสิ้น'),
         [t('รายละเอียด')]: caseItem.details ?? '',
         [t('ผู้สร้าง')]: details.caretakers.find((caretaker) => caretaker.id === caseItem.created_by)?.name ?? '',
         [t('ผู้ดูแล')]: caseItem.caretakers?.map((caretaker) => caretaker.name).join(', ') ?? '',
@@ -201,6 +189,19 @@ export default function StudentHistory({ id }: { id: string }) {
         [t('ผลลัพธ์')]: update.result_note ?? '',
         [t('ขั้นตอนถัดไป')]: update.next_step ?? '',
       })));
+      const serviceFormRows = history.flatMap(({ caseItem, details }) => {
+        const serviceForm = details.serviceForm;
+        if (!serviceForm) return [];
+        return serviceFormSections(serviceForm.service_type, serviceForm.form_data)
+          .flatMap((section) => section.fields.map((field) => ({
+            [t('รหัสเคส')]: caseItem.id,
+            [t('วันที่นัดหมาย')]: formatThaiDate(caseItem.scheduled_at),
+            [t('บริการ')]: t(caseServiceTypeName(serviceForm.service_type)),
+            [t('หัวข้อ')]: t(section.title),
+            [t('รายการ')]: t(field.label),
+            [t('ข้อมูล')]: field.value,
+          })));
+      });
       const signatureRows = history.flatMap(({ caseItem, details }) => details.signatures.map((signature) => ({
         [t('รหัสเคส')]: caseItem.id,
         [t('วันที่ลงนาม')]: formatThaiDate(signature.signed_at),
@@ -210,14 +211,26 @@ export default function StudentHistory({ id }: { id: string }) {
       })));
       const casesSheet = XLSX.utils.json_to_sheet(caseRows);
       const updatesSheet = XLSX.utils.json_to_sheet(updateRows);
+      const serviceFormsSheet = serviceFormRows.length
+        ? XLSX.utils.json_to_sheet(serviceFormRows)
+        : XLSX.utils.aoa_to_sheet([[
+          t('รหัสเคส'),
+          t('วันที่นัดหมาย'),
+          t('บริการ'),
+          t('หัวข้อ'),
+          t('รายการ'),
+          t('ข้อมูล'),
+        ]]);
       const signaturesSheet = XLSX.utils.json_to_sheet(signatureRows);
       summary['!cols'] = [{ wch: 24 }, { wch: 40 }];
       casesSheet['!cols'] = [{ wch: 38 }, { wch: 22 }, { wch: 22 }, { wch: 26 }, { wch: 16 }, { wch: 48 }, { wch: 24 }, { wch: 32 }, { wch: 28 }];
       updatesSheet['!cols'] = [{ wch: 38 }, { wch: 22 }, { wch: 24 }, { wch: 42 }, { wch: 42 }, { wch: 42 }];
+      serviceFormsSheet['!cols'] = [{ wch: 38 }, { wch: 22 }, { wch: 38 }, { wch: 36 }, { wch: 44 }, { wch: 60 }];
       signaturesSheet['!cols'] = [{ wch: 38 }, { wch: 22 }, { wch: 28 }, { wch: 24 }, { wch: 60 }];
       XLSX.utils.book_append_sheet(workbook, summary, t('ข้อมูลนักเรียน'));
       XLSX.utils.book_append_sheet(workbook, casesSheet, t('ประวัติเคส'));
       XLSX.utils.book_append_sheet(workbook, updatesSheet, t('บันทึกติดตาม'));
+      XLSX.utils.book_append_sheet(workbook, serviceFormsSheet, t('แบบฟอร์มบริการ'));
       XLSX.utils.book_append_sheet(workbook, signaturesSheet, t('ลายเซ็น'));
       const safeName = (student.student_id || student.id).replace(/[<>:"/\\|?*]/g, '_');
       XLSX.writeFile(workbook, `itpctakecare-${safeName}.xlsx`);
@@ -243,10 +256,22 @@ export default function StudentHistory({ id }: { id: string }) {
           </div>
           <div className="flex flex-wrap gap-2"><button disabled={exporting} onClick={() => void exportPdf()} className="flex items-center gap-2 rounded-xl border border-gray-200 px-3 py-2 text-sm hover:bg-gray-50 disabled:opacity-60"><FileText size={16} />{exporting ? t('กำลังจัดทำ...') : t('ดูตัวอย่าง PDF')}</button><button disabled={exporting} onClick={() => void exportExcel()} className="flex items-center gap-2 rounded-xl bg-primary px-3 py-2 text-sm font-medium text-white hover:bg-primary-hover disabled:opacity-60"><FileSpreadsheet size={16} />{exporting ? t('กำลังจัดทำ...') : t('ดาวน์โหลด Excel')}</button></div>
         </div>
+        {user.role === 'admin' && <section className="mb-6 grid gap-3 rounded-2xl border border-[#eee9ef] bg-white p-4 sm:grid-cols-2">
+          <div>
+            <h2 className="text-sm font-semibold text-gray-700">{t('ข้อมูลติดต่อ')}</h2>
+            <p className="mt-1 text-sm text-gray-600">{t('เบอร์โทรนักเรียน')}: {student.phone || '-'}</p>
+          </div>
+          <div>
+            <h2 className="text-sm font-semibold text-gray-700">{t('เอกสารสุขภาพ')}</h2>
+            {typeof studentIntake?.medicalCertificateUrl === 'string'
+              ? <a href={studentIntake.medicalCertificateUrl} target="_blank" rel="noreferrer" className="mt-1 inline-block text-sm text-primary underline">{typeof studentIntake.medicalCertificateName === 'string' ? studentIntake.medicalCertificateName : t('เปิดใบรับรองแพทย์')}</a>
+              : <p className="mt-1 text-sm text-gray-500">{t('ยังไม่มีใบรับรองแพทย์')}</p>}
+          </div>
+        </section>}
         <div className="mb-3 flex items-center gap-2"><Download size={17} className="text-primary" /><h2 className="font-bold text-gray-800">{t('ประวัติทุกเคส')}</h2></div>
         {orderedCases.length ? <div className="space-y-3">{orderedCases.map((item) => <article key={item.id} className="rounded-2xl border border-[#eee9ef] bg-white p-4 sm:p-5">
-          <div className="flex flex-wrap items-start justify-between gap-2"><div><h3 className="font-semibold text-gray-800">{t(caseTypeName(item))}</h3><p className="mt-1 text-sm text-primary">{t(caseServiceTypeName(item.service_type))}</p><p className="mt-1 text-sm text-gray-500">{formatThaiDate(item.scheduled_at)}</p></div><span className={`rounded-full px-3 py-1 text-xs font-medium ${item.appointment_status === 'attended' ? 'bg-pastel-mint text-[#38583c]' : item.appointment_status === 'no_show' ? 'bg-[#fde8e8] text-[#8e3636]' : item.appointment_status === 'rescheduled' ? 'bg-[#e8f0fd] text-[#345d94]' : 'bg-pastel-peach text-[#80533b]'}`}>{t(appointmentStatusName(item.appointment_status))}</span></div>
-          <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-gray-600">{item.details || t('ไม่มีรายละเอียด')}</p><p className="mt-3 text-xs text-gray-400">{t('ผู้ดูแล:')} {item.caretakers?.map((caretaker) => caretaker.name).join(', ') || '-'}</p>
+          <div className="flex flex-wrap items-start justify-between gap-2"><div><h3 className="font-semibold text-gray-800">{t(caseDisplayName(item))}</h3><p className="mt-1 text-sm text-gray-500">{formatThaiDate(item.scheduled_at)}</p></div><span className={`rounded-full px-3 py-1 text-xs font-medium ${item.appointment_status === 'attended' ? 'bg-pastel-mint text-[#38583c]' : item.appointment_status === 'no_show' ? 'bg-[#fde8e8] text-[#8e3636]' : item.appointment_status === 'rescheduled' ? 'bg-[#e8f0fd] text-[#345d94]' : 'bg-pastel-peach text-[#80533b]'}`}>{t(appointmentStatusName(item.appointment_status))}</span></div>
+          <p className="mt-2 text-sm text-gray-600">{t('สถานที่นัดหมาย')}: {item.location || '-'}</p><p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-gray-600">{item.details || t('ไม่มีรายละเอียด')}</p><p className="mt-3 text-xs text-gray-400">{t('ผู้ดูแล:')} {item.caretakers?.map((caretaker) => caretaker.name).join(', ') || '-'}</p>
         </article>)}</div> : <div className="rounded-2xl border border-dashed border-gray-300 bg-white py-12 text-center text-sm text-gray-500">{t('ยังไม่มีประวัติเคสสำหรับนักเรียนคนนี้')}</div>}
       </>}
     </section>

@@ -1,5 +1,21 @@
 @import "tailwindcss";
 
+@font-face {
+  font-family: "Sarabun";
+  src: url("/fonts/Sarabun-Regular.ttf") format("truetype");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Sarabun";
+  src: url("/fonts/Sarabun-Bold.ttf") format("truetype");
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+}
+
 :root {
   --background: #faf8fc;
   --foreground: #211a27;
@@ -54,4 +70,186 @@ textarea::placeholder {
 select option {
   color: #000000;
   background: #ffffff;
+}
+
+.case-service-print-root {
+  display: none;
+}
+
+@page {
+  size: A4;
+  margin: 15mm 20mm;
+}
+
+@media print {
+  html,
+  body {
+    zoom: 1 !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+
+  body {
+    margin: 0 !important;
+  }
+
+  body * {
+    visibility: hidden !important;
+  }
+
+  .case-service-print-root {
+    position: static !important;
+    display: block !important;
+    width: 100% !important;
+    color: #000000 !important;
+    font-family: "Sarabun", sans-serif !important;
+    font-size: 14pt !important;
+    line-height: 1.45 !important;
+    visibility: visible !important;
+  }
+
+  .case-service-print-root * {
+    visibility: visible !important;
+  }
+
+  .case-service-print-document {
+    display: table !important;
+    width: 100%;
+    border-collapse: collapse;
+    border-spacing: 0;
+  }
+
+  .case-service-print-document thead {
+    display: table-header-group;
+  }
+
+  .case-service-print-document tbody {
+    display: table-row-group;
+  }
+
+  .case-service-print-document th,
+  .case-service-print-document td {
+    padding: 0;
+    vertical-align: top;
+  }
+
+  .case-service-print-header {
+    position: relative;
+    padding: 0 0 3mm;
+    border-bottom: 0.3mm solid #555555;
+    margin-bottom: 4mm;
+    text-align: center;
+  }
+
+  .case-service-print-header p {
+    margin: 0;
+    font-weight: 700;
+  }
+
+  .case-service-print-code {
+    position: absolute;
+    top: 0;
+    right: 0;
+    font-weight: 700;
+  }
+
+  .case-service-print-header h1 {
+    margin: 2mm 0 0;
+    font-size: 16pt;
+    font-weight: 700;
+  }
+
+  .case-service-print-section {
+    margin: 0 0 3mm;
+  }
+
+  .case-service-print-section h2 {
+    margin: 3mm 0 1.5mm;
+    font-size: 14pt;
+    font-weight: 700;
+    break-after: avoid-page;
+    page-break-after: avoid;
+  }
+
+  .case-service-print-section-heading-row {
+    break-after: avoid-page;
+    page-break-after: avoid;
+  }
+
+  .case-service-print-field-row,
+  .case-service-print-student {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .case-service-print-long-field-row {
+    break-inside: auto;
+    page-break-inside: auto;
+  }
+
+  .case-service-print-short-field {
+    display: flex;
+    align-items: flex-end;
+    gap: 1.5mm;
+    margin: 1mm 0;
+  }
+
+  .case-service-print-value {
+    flex: 1;
+    min-width: 10mm;
+    min-height: 1.4em;
+    border-bottom: 0.25mm dotted #000000;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  .case-service-print-choices {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.5mm 3mm;
+    margin-top: 1mm;
+  }
+
+  .case-service-print-paragraph {
+    min-height: 1.5em;
+    margin: 1mm 0 0;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    line-height: 1.55;
+  }
+
+  .case-service-print-long-field {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .case-service-print-other {
+    margin-top: 1mm;
+  }
+
+  .case-service-print-student {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 0 4mm;
+    margin-bottom: 2mm;
+  }
+
+  .case-service-print-signature {
+    margin: 7mm 0 5mm;
+    text-align: right;
+  }
+
+  .case-service-print-signature p,
+  .case-service-print-footer p {
+    margin: 0;
+  }
+
+  .case-service-print-footer {
+    border-top: 0.25mm solid #777777;
+    padding-top: 2mm;
+    font-size: 11pt;
+    text-align: center;
+  }
 }

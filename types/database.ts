@@ -25,9 +25,11 @@ export interface itpc_takecare_students {
   grade: string | null;
   room: number | null;
   gender: string | null;
+  phone?: string | null;
   academic_year: string;
   profile_image_path?: string | null;
   profile_photo_url?: string | null;
+  student_record_data?: Record<string, string | string[]> | null;
   deactivated_at: string | null;
   case_count?: number;
 }
@@ -40,6 +42,7 @@ export interface itpc_takecare_cases {
   other_text: string | null;
   details: string | null;
   scheduled_at: string;
+  location: string | null;
   status: 'planned' | 'done';
   created_by: string;
   created_by_name?: string | null;
